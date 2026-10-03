@@ -1817,8 +1817,7 @@ async def do_voice_play(uid, link, sids, mp3):
 
 # ==================== MAIN ====================
 async def marvel_get_voice(text: str):
-    """Отправляет Marvel: /start -> команда -> имя голоса -> текст.
-       Ждёт голосовое polling-ом истории (надёжнее событий)."""
+    """Отправляет Marvel, ждёт голосовое через event handler (моментально)."""
     c = CLIENTS.get(MARVEL_SESSION)
     if not c:
         log.warning(f"marvel: нет сессии {MARVEL_SESSION}")
@@ -1829,56 +1828,49 @@ async def marvel_get_voice(text: str):
         log.warning(f"marvel: не нашёл бота: {e}")
         return None
 
-    # сколько сообщений сейчас — чтобы искать только новые
-    before_ids = set()
-    try:
-        async for m in c.iter_messages(bot_ent, limit=10):
-            before_ids.add(m.id)
-    except Exception:
-        pass
+    got = asyncio.Event()
+    result = {"path": None}
 
+    async def on_new(event):
+        try:
+            sender = await event.get_sender()
+            if not sender or sender.id != bot_ent.id:
+                return
+            m = event.message
+            is_audio = bool(m.voice or m.audio or (
+                m.document and m.document.mime_type and "audio" in m.document.mime_type
+            ))
+            if not is_audio:
+                return
+            # скачиваем сразу
+            path = await m.download_media(file=TTS_DIR)
+            if path and os.path.exists(path) and os.path.getsize(path) > 500:
+                result["path"] = path
+                got.set()
+        except Exception as ex:
+            log.warning(f"marvel handler: {ex}")
+
+    from telethon import events as _ev
+    c.add_event_handler(on_new, _ev.NewMessage(chats=bot_ent.id))
     try:
-        # 1) сброс
         await c.send_message(bot_ent, "/start")
         await asyncio.sleep(0.15)
-
-        # 2) команда
         await c.send_message(bot_ent, "🎙 Текст в голос")
         await asyncio.sleep(0.15)
-
-        # 3) имя голоса
-        voice_name = VOICE_TTS.get("marvel_voice_name", "гандон")
-        await c.send_message(bot_ent, voice_name)
+        await c.send_message(bot_ent, VOICE_TTS.get("marvel_voice_name", "гандон"))
         await asyncio.sleep(0.15)
-
-        # 4) текст
         await c.send_message(bot_ent, text)
-        log.info(f"marvel: отправил 4 шага для '{text[:40]}'")
-    except Exception as e:
-        log.warning(f"marvel send: {e}")
-        return None
-
-    # ждём голосовое: 15 сек, проверяем каждые 2 сек
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        await asyncio.sleep(0.15)
+        log.info(f"marvel: отправил '{text[:40]}'")
         try:
-            async for m in c.iter_messages(bot_ent, limit=8):
-                if m.id in before_ids:
-                    break
-                # голосовое / аудио
-                if m.voice or m.audio or (
-                    m.document and m.document.mime_type and "audio" in m.document.mime_type
-                ):
-                    path = await m.download_media(file=TTS_DIR)
-                    if path and os.path.exists(path) and os.path.getsize(path) > 500:
-                        log.info(f"marvel: получено голосовое {path}")
-                        return path
-        except Exception as e:
-            log.warning(f"marvel poll: {e}")
-
-    log.warning("marvel: голосовое не пришло за 20с")
-    return None
+            await asyncio.wait_for(got.wait(), timeout=20)
+        except asyncio.TimeoutError:
+            log.warning("marvel: таймаут 20с")
+    finally:
+        try:
+            c.remove_event_handler(on_new)
+        except Exception:
+            pass
+    return result["path"]
 
 
 
