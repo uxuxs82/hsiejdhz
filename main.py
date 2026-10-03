@@ -81,6 +81,47 @@ try:
 except Exception as _e:
     print(f"silent gen: {_e}")
 
+
+# ==== громкость ====
+VOLUME_LOUD = {"on": False}
+VOLUME_BOOST = 3.0
+
+
+def list_voice_files():
+    vd = os.path.join(DATA_DIR, "voice")
+    if not os.path.exists(vd):
+        return []
+    exts = (".mp3", ".ogg", ".oga", ".opus", ".m4a", ".wav", ".aac", ".flac")
+    fs = [f for f in os.listdir(vd) if f.lower().endswith(exts)]
+    fs.sort(key=lambda f: os.path.getmtime(os.path.join(vd, f)), reverse=True)
+    return fs
+
+
+async def make_loud(path):
+    """Если включён режим ГРОМКО — возвращает путь к громкой копии."""
+    if not VOLUME_LOUD.get("on"):
+        return path
+    out = path + ".loud.mp3"
+    try:
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(path):
+            return out
+    except Exception:
+        pass
+    try:
+        import subprocess
+        def _run():
+            subprocess.check_output(
+                ["ffmpeg", "-y", "-i", path, "-filter:a",
+                 f"volume={VOLUME_BOOST}", "-c:a", "libmp3lame",
+                 "-b:a", "192k", out],
+                stderr=subprocess.DEVNULL, timeout=180,
+            )
+        await asyncio.get_event_loop().run_in_executor(None, _run)
+        return out
+    except Exception as e:
+        log.warning(f"make_loud: {e}")
+        return path
+
 WATCH_CHATS = [-1002828764783, "@BhopProChat"]
 IGNORED_BOTS = ["valyutaTG_bot","themetrbot","iris_bs_bot","iris_cm_bot","ZanAIsuka_bot","MarvelVoiceBot"]
 NO_BUTTON_BOTS = ["iris_bs_bot","iris_cm_bot","valyutaTG_bot","MarvelVoiceBot"]
@@ -161,6 +202,10 @@ if os.path.exists(SETTINGS_FILE):
     try:
         with open(SETTINGS_FILE) as f: SETTINGS.update(json.load(f))
     except: pass
+try:
+    VOLUME_LOUD["on"] = bool(SETTINGS.get("volume_loud", False))
+except Exception:
+    pass
 
 bot = Bot(BOT_TOKEN) if BOT_TOKEN else None
 dp = Dispatcher() if bot else None
@@ -694,8 +739,21 @@ if dp:
         if m.from_user.id != ADMIN_ID: return
         if not PYTGCALLS_OK:
             await m.answer(f"pytgcalls не загружен: {PYTG_ERR}"); return
-        ADMIN_STATE[m.from_user.id] = {"a": "mp3_timed_upload"}
-        await m.answer("Кинь mp3/ogg, потом ссылку и время:")
+        files = list_voice_files()
+        rows = []
+        for fname in files[:12]:
+            p = os.path.join(DATA_DIR, "voice", fname)
+            try: sz = os.path.getsize(p) // 1024
+            except Exception: sz = 0
+            rows.append([InlineKeyboardButton(
+                text=f"🎵 {fname[:35]} ({sz}K)",
+                callback_data=f"vpick_timed:{fname}")])
+        rows.append([InlineKeyboardButton(text="📥 Загрузить новую",
+                                          callback_data="vpick_timed:__upload__")])
+        vol = "ГРОМКО 🔥" if VOLUME_LOUD.get("on") else "обычная"
+        rows.append([InlineKeyboardButton(text=f"🔊 Громкость: {vol}",
+                                          callback_data="vpick_timed:__toggle_vol__")])
+        await m.answer("Выбери mp3:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
     @dp.message(F.text == "🚪 Выйти из войса")
     async def vl(m: at.Message):
@@ -706,8 +764,23 @@ if dp:
     @dp.message(F.text == "🔊 MP3 в войс")
     async def mp3(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
-        ADMIN_STATE[m.from_user.id] = {"a": "mp3_upload"}
-        await m.answer("Кинь mp3/ogg файл. Потом скажу куда играть.")
+        if not PYTGCALLS_OK:
+            await m.answer(f"pytgcalls не загружен: {PYTG_ERR}"); return
+        files = list_voice_files()
+        rows = []
+        for fname in files[:12]:
+            p = os.path.join(DATA_DIR, "voice", fname)
+            try: sz = os.path.getsize(p) // 1024
+            except Exception: sz = 0
+            rows.append([InlineKeyboardButton(
+                text=f"🎵 {fname[:35]} ({sz}K)",
+                callback_data=f"vpick_play:{fname}")])
+        rows.append([InlineKeyboardButton(text="📥 Загрузить новую",
+                                          callback_data="vpick_play:__upload__")])
+        vol = "ГРОМКО 🔥" if VOLUME_LOUD.get("on") else "обычная"
+        rows.append([InlineKeyboardButton(text=f"🔊 Громкость: {vol}",
+                                          callback_data="vpick_play:__toggle_vol__")])
+        await m.answer("Выбери mp3:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
     @dp.message(F.text == "💬 Написать")
     async def wr(m: at.Message):
@@ -854,6 +927,31 @@ if dp:
     @dp.callback_query()
     async def cb(cbq: at.CallbackQuery):
         if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+
+        # выбор mp3 из списка
+        if cbq.data.startswith("vpick_play:") or cbq.data.startswith("vpick_timed:"):
+            mode = "play" if cbq.data.startswith("vpick_play:") else "timed"
+            val = cbq.data.split(":", 1)[1]
+            if val == "__upload__":
+                a = "mp3_upload" if mode == "play" else "mp3_timed_upload"
+                ADMIN_STATE[cbq.from_user.id] = {"a": a}
+                await cbq.message.answer("Кинь mp3/ogg файл:")
+            elif val == "__toggle_vol__":
+                VOLUME_LOUD["on"] = not VOLUME_LOUD.get("on", False)
+                SETTINGS["volume_loud"] = VOLUME_LOUD["on"]
+                save_json(SETTINGS_FILE, SETTINGS)
+                await cbq.message.answer(
+                    f"громкость: {'ГРОМКО 🔥' if VOLUME_LOUD['on'] else 'обычная'}")
+            else:
+                path = os.path.join(DATA_DIR, "voice", val)
+                if not os.path.exists(path):
+                    await cbq.message.answer("файл пропал"); await cbq.answer(); return
+                a = "voice_link_mp3" if mode == "play" else "mp3_timed_link"
+                ADMIN_STATE[cbq.from_user.id] = {"a": a, "mp3": path}
+                await cbq.message.answer(f"выбрано: {val}\nКинь ссылку/юзернейм чата:")
+            await cbq.answer()
+            return
+
         act, sid = cbq.data.split(":", 1)
         st = ADMIN_STATE.get(cbq.from_user.id, {})
         sids = list_sids() if sid == "__all__" else [sid]
