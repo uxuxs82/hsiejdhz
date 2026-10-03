@@ -218,6 +218,8 @@ def list_sids():
 # ==================== ССЫЛКИ ====================
 def parse_target(s):
     s = s.strip()
+    # t.me/chat?videochat, t.me/chat/123?comment=1 -> чистим query и fragment
+    s = s.split("?")[0].split("#")[0].rstrip("/")
     m = re.match(r"(?:https?://)?t\.me/(?:joinchat/|\+)([A-Za-z0-9_\-]+)", s)
     if m: return "invite", m.group(1)
     m = re.match(r"(?:https?://)?t\.me/([A-Za-z0-9_]+)/(\d+)", s)
@@ -255,6 +257,17 @@ async def resolve_entity(client, raw):
     except Exception as e:
         log.warning(f"resolve {raw}: {e}")
         return None
+
+
+def _get_voice_chat_id(full_chat):
+    """Возвращает call id голосового чата из full_chat."""
+    try:
+        call = getattr(full_chat, "call", None)
+        if call:
+            return call.id
+    except Exception:
+        pass
+    return None
 
 
 # ==================== ИИ ====================
