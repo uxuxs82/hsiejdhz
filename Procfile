@@ -1,1 +1,1 @@
-worker: python -u ai_chat.py
+worker: python -u main.py

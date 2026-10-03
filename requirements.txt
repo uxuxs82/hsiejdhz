@@ -1,2 +1,4 @@
 telethon
-aiohttp
+aiogram>=3.7
+pytgcalls
+aiofiles
