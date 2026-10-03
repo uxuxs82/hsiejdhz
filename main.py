@@ -45,14 +45,22 @@ socket.setdefaulttimeout(20)
 
 # ==================== ENV ====================
 # ==== все секреты ТОЛЬКО из env ====
+# ==== всё ТОЛЬКО из env ====
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 ANYMODEL_API_KEY = os.environ.get("ANYMODEL_API_KEY", "")
 ANYMODEL_BASE_URL = os.environ.get("ANYMODEL_BASE_URL", "https://anymodel.org/v1")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "297562307"))
+MY_NAME = os.environ.get("MY_NAME", "vortex")
+
+# Vortex - из TG_STRING_SESSION
+TG_STRING_SESSION = os.environ.get("TG_STRING_SESSION", "")
 AI_SESSION_ID = os.environ.get("AI_SESSION_ID", "8284866397")
-AI_NAME = os.environ.get("MY_NAME", "vortex")
+AI_NAME = MY_NAME
+
+# Другие сессии - из SESSIONS_JSON (словарь {id: string})
+SESSIONS_JSON = os.environ.get("SESSIONS_JSON", "")
 
 DATA_DIR = "/data"
 try: os.makedirs(DATA_DIR, exist_ok=True)
@@ -153,20 +161,20 @@ def save_json(path, obj):
 
 # ==================== СЕССИИ ====================
 def scan_env_sessions():
-    """Сессии ТОЛЬКО из env.
-    SESSIONS_JSON - одна переменная со словарём {sid: string}
-    или SESSION_<id> - по одной переменной на сессию."""
-    raw = os.environ.get("SESSIONS_JSON")
-    if raw:
-        try:
-            d = json.loads(raw)
-            return {str(k): str(v) for k, v in d.items() if v}
-        except Exception as e:
-            log.warning(f"SESSIONS_JSON: {e}")
+    """Возвращает {sid: string_session}.
+    1) vortex из TG_STRING_SESSION
+    2) остальные из SESSIONS_JSON (словарь)"""
     out = {}
-    for k, v in os.environ.items():
-        if k.startswith("SESSION_") and v and len(v) > 50:
-            out[k[len("SESSION_"):]] = v.strip()
+    if TG_STRING_SESSION:
+        out[AI_SESSION_ID] = TG_STRING_SESSION.strip()
+    if SESSIONS_JSON:
+        try:
+            d = json.loads(SESSIONS_JSON)
+            for k, v in d.items():
+                if v:
+                    out[str(k)] = str(v)
+        except Exception as e:
+            log.warning(f"SESSIONS_JSON parse: {e}")
     return out
     return {str(k): str(v) for k, v in CFG.get("SESSIONS", {}).items() if v}
 
