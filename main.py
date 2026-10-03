@@ -795,22 +795,38 @@ if dp:
         except Exception as e:
             await m.answer(f"ошибка: {e}")
 
-    @dp.message(F.document)
+    @dp.message(F.document | F.audio | F.voice)
     async def doc(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
         st = ADMIN_STATE.get(m.from_user.id, {})
+        # определяем файл: document / audio / voice
+        file_obj = m.document or m.audio or m.voice
+        if file_obj is None:
+            return
+        # имя файла
+        fname = "voice_file"
+        if getattr(file_obj, "file_name", None):
+            fname = file_obj.file_name
+        path = os.path.join(DATA_DIR, fname)
+        try:
+            await bot.download(file_obj, destination=path)
+        except Exception as e:
+            await m.answer(f"не смог скачать: {e}"); return
+        sz = os.path.getsize(path)
+        if sz < 500:
+            await m.answer(f"файл слишком маленький: {sz} байт"); return
         if st.get("a") == "mp3_upload":
-            path = os.path.join(DATA_DIR, "voice_file")
-            await bot.download(m.document, destination=path)
             st["mp3"] = path
             st["a"] = "voice_link_mp3"
-            await m.answer("mp3 сохранён. Теперь кинь ссылку чата с войсом:")
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer(f"mp3 сохранён ({sz} байт). Теперь кинь ссылку чата с войсом:")
         elif st.get("a") == "mp3_timed_upload":
-            path = os.path.join(DATA_DIR, "voice_file")
-            await bot.download(m.document, destination=path)
             st["mp3"] = path
             st["a"] = "mp3_timed_link"
-            await m.answer("mp3 сохранён. Теперь кинь ссылку чата:")
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer(f"mp3 сохранён ({sz} байт). Теперь кинь ссылку чата:")
+        else:
+            await m.answer("сначала нажми '🔊 MP3 в войс' или '⏱ МП3 на N сек'")
 
     @dp.callback_query()
     async def cb(cbq: at.CallbackQuery):
