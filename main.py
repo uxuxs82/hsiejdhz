@@ -998,6 +998,48 @@ if dp:
     async def doc(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
         st = ADMIN_STATE.get(m.from_user.id, {})
+        # === универсальный приём медиа ===
+        if st.get("a") in ("media_upload", "media_timed_upload"):
+            file_obj = m.document or m.audio or m.voice or (m.photo[-1] if m.photo else None) or m.video or m.animation or m.sticker
+            if not file_obj:
+                await m.answer("не понял что пришло"); return
+            fname = "media.bin"
+            if hasattr(file_obj, "file_name") and file_obj.file_name:
+                fname = file_obj.file_name
+            elif m.photo:
+                fname = "photo.jpg"
+            elif m.video:
+                fname = "video.mp4"
+            elif m.animation:
+                fname = "anim.mp4"
+            elif m.sticker:
+                if getattr(file_obj, "is_video", False):
+                    fname = "sticker.webm"
+                elif getattr(file_obj, "is_animated", False):
+                    fname = "sticker.tgs"
+                else:
+                    fname = "sticker.webp"
+            safe = re.sub(r"[^A-Za-z0-9._\-]", "_", fname)
+            ts = int(time.time())
+            path = os.path.join(MEDIA_DIR, f"{ts}_{safe}")
+            try:
+                await bot.download(file_obj, destination=path)
+            except Exception as e:
+                await m.answer(f"не смог скачать: {e}"); return
+            sz = os.path.getsize(path)
+            if sz < 200:
+                await m.answer(f"файл слишком маленький: {sz}"); return
+            kind = media_kind(path)
+            if kind == "unknown":
+                await m.answer(f"формат не распознан: {safe}"); return
+            if kind == "tgs":
+                await m.answer("tgs не поддерживается"); return
+            st["media"] = path
+            st["a"] = "media_link" if st.get("a") == "media_upload" else "media_timed_link"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer(f"✓ сохранено ({kind}, {sz}). Кинь ссылку на чат:")
+            return
+
         # определяем файл: document / audio / voice
         file_obj = m.document or m.audio or m.voice
         if file_obj is None:
@@ -1037,6 +1079,26 @@ if dp:
     @dp.callback_query()
     async def cb(cbq: at.CallbackQuery):
         if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+
+        # === обработка кнопок медиа ===
+        if cbq.data.startswith("mpick_play:") or cbq.data.startswith("mpick_timed:"):
+            mode = "play" if cbq.data.startswith("mpick_play:") else "timed"
+            val = cbq.data.split(":", 1)[1]
+            if val == "__upload__":
+                a = "media_upload" if mode == "play" else "media_timed_upload"
+                ADMIN_STATE[cbq.from_user.id] = {"a": a}
+                await cbq.message.answer("Кинь медиа (фото/видео/gif/стикер):")
+            else:
+                path = os.path.join(MEDIA_DIR, val)
+                if not os.path.exists(path):
+                    await cbq.message.answer("файл пропал")
+                    await cbq.answer()
+                    return
+                a = "media_link" if mode == "play" else "media_timed_link"
+                ADMIN_STATE[cbq.from_user.id] = {"a": a, "media": path}
+                await cbq.message.answer(f"выбрано: {val}\nКинь ссылку/юзернейм чата:")
+            await cbq.answer()
+            return
 
         # выбор mp3 из списка
         if cbq.data.startswith("vpick_play:") or cbq.data.startswith("vpick_timed:"):
@@ -1479,6 +1541,97 @@ async def do_voice_play_timed(uid, link, sids, mp3, secs):
             await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']} вышел")
         except Exception as ex:
             await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']}: {ex}")
+
+
+async def do_media_play(uid, link, sids, media_path, timed_secs=None):
+    if not PYTGCALLS_OK:
+        await bot.send_message(uid, "pytgcalls не установлен"); return
+    if not media_path or not os.path.exists(media_path):
+        await bot.send_message(uid, "файл не найден"); return
+    kind = media_kind(media_path)
+    if kind == "tgs":
+        await bot.send_message(uid, "tgs не поддерживается"); return
+    await bot.send_message(uid, f"конвертирую ({kind})...")
+    mp4 = await convert_media(media_path)
+    if not mp4:
+        await bot.send_message(uid, "не удалось конвертнуть"); return
+    dur = mp3_duration(mp4)
+    if dur <= 0: dur = timed_secs if timed_secs else 30
+    entered = []
+
+    async def get_call_and_entity(sid):
+        c = CLIENTS.get(sid)
+        if not c: return None
+        e = await resolve_entity(c, link)
+        if not e:
+            await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: не найден")
+            return None
+        try:
+            await c(JoinChannelRequest(e))
+        except: pass
+        try:
+            py = VOICE_CALLS.get(sid)
+            if not py:
+                py = PyTgCalls(c); await py.start(); VOICE_CALLS[sid] = py
+            return (sid, e, py)
+        except Exception as ex:
+            await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
+            return None
+
+    async def play_one(sid, e, py):
+        try:
+            await py.play(utils.get_peer_id(e), MediaStream(mp4))
+            entered.append((sid, e, time.time()))
+            await bot.send_message(uid, f"▶ {CLIENT_META[sid]['name']}")
+        except Exception as ex:
+            await bot.send_message(uid, f"✗ play {CLIENT_META[sid]['name']}: {ex}")
+
+    half = max(1, len(sids) // 2)
+    first = sids[:half]; rest = sids[half:]
+    joined_first = []
+    for sid in first:
+        r = await get_call_and_entity(sid)
+        if r: joined_first.append(r)
+        await asyncio.sleep(0.25)
+    if not joined_first:
+        await bot.send_message(uid, "никто не зашёл"); return
+
+    rest_task = None
+    n = len(joined_first)
+
+    async def run_rest():
+        await asyncio.sleep(0.25)
+        tasks = []
+        for sid in rest:
+            async def one(s=sid):
+                r = await get_call_and_entity(s)
+                if not r: return
+                s2, e2, py2 = r
+                await play_one(s2, e2, py2)
+            tasks.append(asyncio.create_task(one()))
+        await asyncio.gather(*tasks)
+
+    for i, (sid, e, py) in enumerate(joined_first):
+        if i == n - 2 and rest:
+            rest_task = asyncio.create_task(run_rest())
+        await play_one(sid, e, py)
+        await asyncio.sleep(0.25)
+    if rest_task: await rest_task
+    if not entered: return
+    wait_total = timed_secs if timed_secs else (dur + 1)
+
+    async def leave_after(sid, e, start_ts):
+        elapsed = time.time() - start_ts
+        wait = max(0.0, wait_total - elapsed)
+        await asyncio.sleep(wait)
+        try:
+            py = VOICE_CALLS.get(sid)
+            if py: await py.leave_call(utils.get_peer_id(e))
+            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']} вышел")
+        except Exception as ex:
+            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']}: {ex}")
+
+    await asyncio.gather(*[asyncio.create_task(leave_after(*x)) for x in entered])
 
 
 async def do_voice_play(uid, link, sids, mp3):
