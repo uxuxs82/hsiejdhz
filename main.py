@@ -35,7 +35,10 @@ from aiogram.types import (
 
 try:
     from pytgcalls import PyTgCalls
-    from pytgcalls.types import MediaStream
+    try:
+        from pytgcalls.types import MediaStream
+    except Exception:
+        from pytgcalls.types.input_stream import AudioPiped as MediaStream
     PYTGCALLS_OK = True
 except Exception as _e:
     PYTGCALLS_OK = False
@@ -67,6 +70,16 @@ try: os.makedirs(DATA_DIR, exist_ok=True)
 except Exception:
     DATA_DIR = "/tmp"
     os.makedirs(DATA_DIR, exist_ok=True)
+
+SILENT_OGG = os.path.join(DATA_DIR, "silent.ogg")
+try:
+    if not os.path.exists(SILENT_OGG):
+        os.system(
+            f'ffmpeg -y -f lavfi -i anullsrc=r=48000:cl=mono -t 3600 '
+            f'-c:a libopus -b:a 16k "{SILENT_OGG}" > /dev/null 2>&1'
+        )
+except Exception as _e:
+    print(f"silent gen: {_e}")
 
 WATCH_CHATS = [-1002828764783, "@BhopProChat"]
 IGNORED_BOTS = ["valyutaTG_bot","themetrbot","iris_bs_bot","iris_cm_bot","ZanAIsuka_bot","MarvelVoiceBot"]
@@ -588,7 +601,8 @@ def main_menu():
         [KeyboardButton(text="📋 Сессии"), KeyboardButton(text="📊 Статус")],
         [KeyboardButton(text="🚪 Войти в чат"), KeyboardButton(text="📢 Войти в канал")],
         [KeyboardButton(text="🚪 Выйти из чата"), KeyboardButton(text="🎙 Войти в войс")],
-        [KeyboardButton(text="🚪 Выйти из войса"), KeyboardButton(text="🔊 MP3 в войс")],
+        [KeyboardButton(text="🎙 Войти на N сек"), KeyboardButton(text="🚪 Выйти из войса")],
+        [KeyboardButton(text="🔊 MP3 в войс"), KeyboardButton(text="⏱ МП3 на N сек")],
         [KeyboardButton(text="💬 Написать"), KeyboardButton(text="✉️ ЛС юзеру")],
         [KeyboardButton(text="🖼 Аватар"), KeyboardButton(text="✏️ Имя")],
         [KeyboardButton(text="🎭 Реакция"), KeyboardButton(text="👥 Участники")],
@@ -653,6 +667,22 @@ if dp:
             await m.answer(f"pytgcalls не загружен: {PYTG_ERR}"); return
         ADMIN_STATE[m.from_user.id] = {"a": "voice_join"}
         await m.answer("Кинь ссылку/юзернейм чата с войсом:")
+
+    @dp.message(F.text == "🎙 Войти на N сек")
+    async def vjn(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        if not PYTGCALLS_OK:
+            await m.answer(f"pytgcalls не загружен: {PYTG_ERR}"); return
+        ADMIN_STATE[m.from_user.id] = {"a": "voice_timed_link"}
+        await m.answer("Кинь ссылку/юзернейм чата с войсом:")
+
+    @dp.message(F.text == "⏱ МП3 на N сек")
+    async def mp3n(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        if not PYTGCALLS_OK:
+            await m.answer(f"pytgcalls не загружен: {PYTG_ERR}"); return
+        ADMIN_STATE[m.from_user.id] = {"a": "mp3_timed_upload"}
+        await m.answer("Кинь mp3/ogg, потом ссылку и время:")
 
     @dp.message(F.text == "🚪 Выйти из войса")
     async def vl(m: at.Message):
@@ -762,6 +792,12 @@ if dp:
             st["mp3"] = path
             st["a"] = "voice_link_mp3"
             await m.answer("mp3 сохранён. Теперь кинь ссылку чата с войсом:")
+        elif st.get("a") == "mp3_timed_upload":
+            path = os.path.join(DATA_DIR, "voice_file")
+            await bot.download(m.document, destination=path)
+            st["mp3"] = path
+            st["a"] = "mp3_timed_link"
+            await m.answer("mp3 сохранён. Теперь кинь ссылку чата:")
 
     @dp.callback_query()
     async def cb(cbq: at.CallbackQuery):
@@ -799,6 +835,15 @@ if dp:
             link = st.get("link")
             mp3p = st.get("mp3")
             await do_voice_play(cbq.from_user.id, link, sids, mp3p)
+        elif act == "vj_timed":
+            link = st.get("link")
+            secs = st.get("secs", 60)
+            await do_voice_join_timed(cbq.from_user.id, link, sids, secs)
+        elif act == "mp3_timed":
+            link = st.get("link")
+            secs = st.get("secs", 60)
+            mp3p = st.get("mp3")
+            await do_voice_play_timed(cbq.from_user.id, link, sids, mp3p, secs)
         elif act == "jc":
             await do_join(cbq.from_user.id, st.get("link"), sids, is_channel=False)
         elif act == "jch":
@@ -830,6 +875,41 @@ if dp:
         elif a == "voice_link_mp3":
             st["link"] = m.text.strip()
             await m.answer("Выбери сессии:", reply_markup=sessions_kb("mp3go", "all"))
+
+        elif a == "voice_timed_link":
+            st["link"] = m.text.strip()
+            st["a"] = "voice_timed_secs"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer("Сколько секунд сидеть? (например 60)")
+
+        elif a == "voice_timed_secs":
+            try:
+                st["secs"] = int(m.text.strip())
+            except ValueError:
+                await m.answer("нужно число, попробуй снова"); return
+            st["a"] = "voice_timed_pick"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer(f"ок, {st['secs']} сек. Выбери сессии:",
+                           reply_markup=sessions_kb("vj_timed", "all"))
+
+        elif a == "mp3_timed_upload":
+            pass  # ждём документ
+
+        elif a == "mp3_timed_link":
+            st["link"] = m.text.strip()
+            st["a"] = "mp3_timed_secs"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer("Сколько секунд играть?")
+
+        elif a == "mp3_timed_secs":
+            try:
+                st["secs"] = int(m.text.strip())
+            except ValueError:
+                await m.answer("нужно число"); return
+            st["a"] = "mp3_timed_pick"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer(f"ок, {st['secs']} сек. Выбери сессии:",
+                           reply_markup=sessions_kb("mp3_timed", "all"))
 
         elif a == "voice_leave":
             st["link"] = m.text.strip()
@@ -1017,6 +1097,97 @@ async def do_voice_leave(uid, link, sids):
             await bot.send_message(uid, f"✓ {CLIENT_META[sid]['name']} вышел из войса")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
+
+
+async def do_voice_join_timed(uid, link, sids, secs):
+    """Заходят в войс с silent.ogg на secs секунд, потом выходят."""
+    if not PYTGCALLS_OK:
+        await bot.send_message(uid, "pytgcalls не установлен"); return
+    if not os.path.exists(SILENT_OGG):
+        await bot.send_message(uid, "silent.ogg не сгенерирован, нет ffmpeg"); return
+    entered = []
+    for sid in sids:
+        c = CLIENTS.get(sid)
+        if not c: continue
+        e = await resolve_entity(c, link)
+        if not e:
+            await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: не найден")
+            continue
+        try:
+            await c(JoinChannelRequest(e))
+        except: pass
+        try:
+            py = VOICE_CALLS.get(sid)
+            if not py:
+                py = PyTgCalls(c)
+                await py.start()
+                VOICE_CALLS[sid] = py
+            try:
+                await py.play(utils.get_peer_id(e), MediaStream(SILENT_OGG))
+            except Exception as e2:
+                await bot.send_message(uid, f"✗ play {CLIENT_META[sid]['name']}: {e2}")
+                continue
+            entered.append((sid, e))
+            await bot.send_message(uid, f"✓ {CLIENT_META[sid]['name']} зашёл в войс на {secs}с")
+        except Exception as ex:
+            await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
+        await asyncio.sleep(random.uniform(2.0, 4.0))
+
+    if not entered:
+        return
+    await bot.send_message(uid, f"сидят... выйдут через {secs} сек")
+    await asyncio.sleep(secs)
+    for sid, e in entered:
+        try:
+            py = VOICE_CALLS.get(sid)
+            if py:
+                await py.leave_call(utils.get_peer_id(e))
+            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']} вышел")
+        except Exception as ex:
+            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']}: {ex}")
+
+
+async def do_voice_play_timed(uid, link, sids, mp3, secs):
+    """Играют mp3 в войсе secs секунд, потом выходят."""
+    if not PYTGCALLS_OK:
+        await bot.send_message(uid, "pytgcalls не установлен"); return
+    if not mp3 or not os.path.exists(mp3):
+        await bot.send_message(uid, "файл не найден"); return
+    entered = []
+    for sid in sids:
+        c = CLIENTS.get(sid)
+        if not c: continue
+        e = await resolve_entity(c, link)
+        if not e:
+            await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: не найден")
+            continue
+        try:
+            await c(JoinChannelRequest(e))
+        except: pass
+        try:
+            py = VOICE_CALLS.get(sid)
+            if not py:
+                py = PyTgCalls(c)
+                await py.start()
+                VOICE_CALLS[sid] = py
+            await py.play(utils.get_peer_id(e), MediaStream(mp3))
+            entered.append((sid, e))
+            await bot.send_message(uid, f"▶ {CLIENT_META[sid]['name']} играет {secs}с")
+        except Exception as ex:
+            await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
+        await asyncio.sleep(random.uniform(2.0, 4.0))
+
+    if not entered:
+        return
+    await asyncio.sleep(secs)
+    for sid, e in entered:
+        try:
+            py = VOICE_CALLS.get(sid)
+            if py:
+                await py.leave_call(utils.get_peer_id(e))
+            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']} вышел")
+        except Exception as ex:
+            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']}: {ex}")
 
 
 async def do_voice_play(uid, link, sids, mp3):
