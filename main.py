@@ -777,6 +777,22 @@ if dp:
         except Exception as e:
             await m.answer(f"не вышло: {e}")
 
+    @dp.message(Command("files"))
+    async def cmd_files(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        vd = os.path.join(DATA_DIR, "voice")
+        if not os.path.exists(vd):
+            await m.answer("пусто"); return
+        fs = sorted(os.listdir(vd))
+        if not fs:
+            await m.answer("пусто"); return
+        lines = []
+        for f in fs[-30:]:
+            p = os.path.join(vd, f)
+            sz = os.path.getsize(p) // 1024
+            lines.append(f"• {f} ({sz} KB)")
+        await m.answer("Сохранённые mp3 (последние 30):\n" + "\n".join(lines))
+
     @dp.message(Command("add_model"))
     async def addm(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
@@ -803,11 +819,18 @@ if dp:
         file_obj = m.document or m.audio or m.voice
         if file_obj is None:
             return
-        # имя файла
-        fname = "voice_file"
+        # имя файла: сохраняем каждую мп3 отдельно в voice/
+        voice_dir = os.path.join(DATA_DIR, "voice")
+        os.makedirs(voice_dir, exist_ok=True)
+
+        orig = "voice_file"
         if getattr(file_obj, "file_name", None):
-            fname = file_obj.file_name
-        path = os.path.join(DATA_DIR, fname)
+            orig = file_obj.file_name
+        # безопасное имя: только буквы/цифры/._-
+        safe = re.sub(r"[^A-Za-z0-9._\-]", "_", orig)
+        ts = int(time.time())
+        fname = f"{ts}_{safe}"
+        path = os.path.join(voice_dir, fname)
         try:
             await bot.download(file_obj, destination=path)
         except Exception as e:
