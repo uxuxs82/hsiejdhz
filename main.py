@@ -83,7 +83,7 @@ except Exception as _e:
 
 
 # ==== громкость ====
-VOLUME_LOUD = {"on": False}
+VOLUME_LOUD = {"on": True}
 VOLUME_BOOST = 5.0
 
 
