@@ -249,6 +249,23 @@ MODELS_FILE = os.path.join(DATA_DIR, "models.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
 
+# ==== TTS ====
+TTS_DIR = os.path.join(DATA_DIR, "tts")
+try:
+    os.makedirs(TTS_DIR, exist_ok=True)
+except Exception:
+    TTS_DIR = DATA_DIR
+
+MARVEL_BOT_USERNAME = "MarvelVoiceBot"
+MARVEL_SESSION = "8414522026"
+MARVEL_TIMEOUT = 20
+
+VOICE_TTS = {
+    "chat_link": None,
+    "marvel_voice_name": "гандон",
+    "active": False,
+}
+
 MEMORY_BOT_MSGS = 200
 MEMORY_USERS = 100
 MEMORY_DIALOG = 15
@@ -1783,6 +1800,142 @@ async def do_voice_play(uid, link, sids, mp3):
 
 
 # ==================== MAIN ====================
+async def marvel_get_voice(text: str):
+    """3 шага к Marvel: команда / имя голоса / текст. Ждёт голосовое."""
+    c = CLIENTS.get(MARVEL_SESSION)
+    if not c:
+        log.warning(f"marvel: нет сессии {MARVEL_SESSION}")
+        return None
+    try:
+        bot_ent = await c.get_entity(MARVEL_BOT_USERNAME)
+    except Exception as e:
+        log.warning(f"marvel: не нашёл бота: {e}")
+        return None
+
+    got = asyncio.Event()
+    result = {"path": None}
+
+    async def on_new(event):
+        try:
+            sender = await event.get_sender()
+            if not sender or sender.id != bot_ent.id:
+                return
+            m = event.message
+            if m.voice or m.audio or (
+                m.document and m.document.mime_type and "audio" in m.document.mime_type
+            ):
+                path = await m.download_media(file=TTS_DIR)
+                if path:
+                    result["path"] = path
+                    got.set()
+        except Exception as ex:
+            log.warning(f"marvel handler: {ex}")
+
+    from telethon import events as _ev
+    c.add_event_handler(on_new, _ev.NewMessage(chats=bot_ent.id))
+    try:
+        await c.send_message(bot_ent, "🎙 Текст в голос")
+        await asyncio.sleep(1.2)
+        voice_name = VOICE_TTS.get("marvel_voice_name", "гандон")
+        await c.send_message(bot_ent, voice_name)
+        await asyncio.sleep(1.2)
+        await c.send_message(bot_ent, text)
+        log.info(f"marvel: 3 шага для '{text[:40]}'")
+        try:
+            await asyncio.wait_for(got.wait(), timeout=MARVEL_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.warning("marvel: таймаут")
+    finally:
+        try:
+            c.remove_event_handler(on_new)
+        except Exception:
+            pass
+    return result["path"]
+
+
+async def voice_tts_dm_handler(event):
+    """ЛС vortex от ADMIN_ID. Текст -> голосовое Сайкуна в его войсе."""
+    try:
+        sender = await event.get_sender()
+        if not sender or sender.id != ADMIN_ID:
+            return
+        text = (event.message.text or "").strip()
+        if not text:
+            return
+
+        low = text.lower()
+
+        if low.startswith("/voice "):
+            new_name = text.split(maxsplit=1)[1].strip()
+            VOICE_TTS["marvel_voice_name"] = new_name
+            await event.reply(f"голос: {new_name}")
+            return
+
+        if low in ("/stop", "stop", "стоп"):
+            sid = MARVEL_SESSION
+            py = VOICE_CALLS.get(sid)
+            if py and VOICE_TTS.get("chat_link"):
+                c = CLIENTS.get(sid)
+                if c:
+                    e = await resolve_entity(c, VOICE_TTS["chat_link"])
+                    if e:
+                        try:
+                            await py.leave_call(utils.get_peer_id(e))
+                        except Exception:
+                            pass
+            VOICE_CALLS.pop(sid, None)
+            VOICE_TTS["chat_link"] = None
+            VOICE_TTS["active"] = False
+            await event.reply("вышел")
+            return
+
+        if low in ("/where", "где"):
+            if VOICE_TTS.get("chat_link"):
+                await event.reply(f"в войсе: {VOICE_TTS['chat_link']}")
+            else:
+                await event.reply("не в войсе")
+            return
+
+        if low == "/help":
+            await event.reply(
+                "пиши текст — озвучу голосом Сайкуна в его войсе.\n"
+                "Сайкун должен быть в войсе (через 🎙 Войти в войс → ссылка → Сайкун).\n\n"
+                "/voice <имя> — сменить голос Marvel\n"
+                "/where — где сейчас\n"
+                "/stop — выйти"
+            )
+            return
+
+        if not VOICE_TTS.get("active") or not VOICE_TTS.get("chat_link"):
+            await event.reply("Сайкун не в войсе. Зайди через 🎙 Войти в войс → ссылка → Сайкун")
+            return
+
+        mp3 = await marvel_get_voice(text)
+        if not mp3:
+            await event.reply("Marvel не ответил")
+            return
+        mc = CLIENTS.get(MARVEL_SESSION)
+        if not mc:
+            await event.reply("Сайкун не подключён")
+            return
+        e = await resolve_entity(mc, VOICE_TTS["chat_link"])
+        if not e:
+            await event.reply("чат пропал")
+            return
+        try:
+            py = VOICE_CALLS.get(MARVEL_SESSION)
+            if not py:
+                py = PyTgCalls(mc)
+                await py.start()
+                VOICE_CALLS[MARVEL_SESSION] = py
+            await py.play(utils.get_peer_id(e), MediaStream(mp3))
+            await event.reply("▶")
+        except Exception as ex:
+            await event.reply(f"ошибка play: {ex}")
+    except Exception as e:
+        log.warning(f"voice_tts_dm: {e}")
+
+
 async def main():
     log.info(f"админ: {ADMIN_ID}, ИИ сессия: {AI_SESSION_ID}")
     await load_env_sessions()
