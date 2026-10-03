@@ -964,27 +964,68 @@ if dp:
 
     @dp.message(Command("grab"))
     async def cmd_grab(m: at.Message):
-        """Скачивает последнее медиа из ЛС с vortex (сессия AI_SESSION_ID).
-        Используй: перешли файл vortex в лс, потом /grab в боте."""
+        """Скачивает последнее медиа от ADMIN_ID в диалогах vortex."""
         if m.from_user.id != ADMIN_ID: return
         c = CLIENTS.get(AI_SESSION_ID)
         if not c:
             await m.answer(f"vortex ({AI_SESSION_ID}) не онлайн"); return
-        await m.answer("ищу последнее медиа в ЛС vortex...")
+        await m.answer("ищу последнее медиа от тебя...")
         try:
             found = None
-            async for msg in c.iter_messages("me", limit=30):
-                if msg.media and not getattr(msg, "web_preview", None):
-                    found = msg
-                    break
+
+            def is_wanted(msg):
+                if getattr(msg, "voice", None): return False
+                if getattr(msg, "video_note", None): return False
+                if getattr(msg, "web_preview", None): return False
+                if getattr(msg, "audio", None): return False
+                return bool(msg.video or msg.photo or msg.document
+                            or msg.animation or msg.sticker)
+
+            # 1) диалог напрямую с ADMIN_ID
+            try:
+                async for msg in c.iter_messages(ADMIN_ID, limit=30):
+                    if is_wanted(msg):
+                        found = msg; break
+            except Exception as e:
+                log.warning(f"grab admin dm: {e}")
+
+            # 2) по всем диалогам, только from_user=ADMIN_ID
             if not found:
-                await m.answer("не нашёл медиа в последних 30 сообщениях"); return
+                async for dialog in c.iter_dialogs(limit=30):
+                    if not dialog.is_user: continue
+                    try:
+                        async for msg in c.iter_messages(dialog.id, limit=15, from_user=ADMIN_ID):
+                            if is_wanted(msg):
+                                found = msg; break
+                    except Exception:
+                        continue
+                    if found: break
+
+            if not found:
+                await m.answer("не нашёл медиа от тебя.\n"
+                               "Кинь файл vortex в лс и напиши /grab"); return
+
             path = await found.download_media(file=MEDIA_DIR)
             if not path:
                 await m.answer("не смог скачать"); return
+
+            base = os.path.basename(path)
+            if "." not in base or base.endswith("."):
+                if found.video: ext = ".mp4"
+                elif found.photo: ext = ".jpg"
+                elif found.animation: ext = ".mp4"
+                elif found.sticker:
+                    ext = ".webm" if getattr(found.sticker, "is_video", False) else ".webp"
+                else: ext = ".bin"
+                newpath = os.path.join(MEDIA_DIR, base + ext)
+                try:
+                    os.rename(path, newpath); path = newpath
+                except Exception: pass
+
             sz = os.path.getsize(path)
             kind = media_kind(path)
             await m.answer(f"✓ сохранено: {os.path.basename(path)} ({kind}, {sz // 1024}K)")
+
         except Exception as e:
             await m.answer(f"ошибка: {e}")
 
