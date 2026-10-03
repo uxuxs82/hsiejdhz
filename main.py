@@ -1714,20 +1714,44 @@ async def do_media_play(uid, link, sids, media_path, timed_secs=None):
         await asyncio.sleep(0.25)
     if rest_task: await rest_task
     if not entered: return
-    wait_total = timed_secs if timed_secs else (dur + 1)
+    if timed_secs:
+        await bot.send_message(uid, f"играют {timed_secs}с, потом выйдут")
 
-    async def leave_after(sid, e, start_ts):
-        elapsed = time.time() - start_ts
-        wait = max(0.0, wait_total - elapsed)
-        await asyncio.sleep(wait)
-        try:
-            py = VOICE_CALLS.get(sid)
-            if py: await py.leave_call(utils.get_peer_id(e))
-            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']} вышел")
-        except Exception as ex:
-            await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']}: {ex}")
+        async def leave_after(sid, e, start_ts):
+            elapsed = time.time() - start_ts
+            wait = max(0.0, timed_secs - elapsed)
+            await asyncio.sleep(wait)
+            try:
+                py = VOICE_CALLS.get(sid)
+                if py:
+                    await py.leave_call(utils.get_peer_id(e))
+                VOICE_CALLS.pop(sid, None)
+                await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']} вышел")
+            except Exception as ex:
+                await bot.send_message(uid, f"↩ {CLIENT_META[sid]['name']}: {ex}")
 
-    await asyncio.gather(*[asyncio.create_task(leave_after(*x)) for x in entered])
+        await asyncio.gather(*[asyncio.create_task(leave_after(*x)) for x in entered])
+    else:
+        await bot.send_message(
+            uid,
+            f"▶ играют. Чтобы остановить — жми 🚪 Выйти из войса"
+        )
+        if dur > 5:
+            period = dur - 2
+
+            async def auto_loop(sid, e):
+                while True:
+                    await asyncio.sleep(period)
+                    if sid not in VOICE_CALLS:
+                        return
+                    try:
+                        py = VOICE_CALLS[sid]
+                        await py.play(utils.get_peer_id(e), MediaStream(mp4))
+                    except Exception:
+                        return
+
+            for sid, e, _ in entered:
+                asyncio.create_task(auto_loop(sid, e))
 
 
 async def do_voice_play(uid, link, sids, mp3):
