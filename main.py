@@ -87,6 +87,76 @@ VOLUME_LOUD = {"on": False}
 VOLUME_BOOST = 5.0
 
 
+MEDIA_DIR = os.path.join(DATA_DIR, "media")
+try:
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+except Exception:
+    MEDIA_DIR = DATA_DIR
+
+
+def list_media_files():
+    if not os.path.exists(MEDIA_DIR):
+        return []
+    fs = [f for f in os.listdir(MEDIA_DIR)
+          if not f.endswith(".tg.mp4")]
+    fs.sort(key=lambda f: os.path.getmtime(os.path.join(MEDIA_DIR, f)), reverse=True)
+    return fs
+
+
+def media_kind(path):
+    """image | video | gif | sticker | unknown"""
+    low = path.lower()
+    if low.endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")):
+        return "image"
+    if low.endswith(".gif"):
+        return "gif"
+    if low.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".ts")):
+        return "video"
+    if low.endswith(".tgs"):
+        return "tgs"
+    return "unknown"
+
+
+async def convert_media(path):
+    """Приводит любой файл к mp4 H.264 720p 30fps для войса."""
+    kind = media_kind(path)
+    out = path + ".tg.mp4"
+    try:
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(path):
+            return out
+    except Exception:
+        pass
+
+    if kind == "tgs":
+        # tgs — gzip-json lottie, без rlottie не конвертнём
+        return None
+
+    import subprocess
+
+    def _run(cmd, timeout=600):
+        subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=timeout)
+
+    try:
+        if kind == "image":
+            # из картинки — 10-секундное видео
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", path, "-t", "10",
+                   "-vf", "scale=720:-2,fps=30,format=yuv420p",
+                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                   "-movflags", "+faststart", out]
+        else:
+            # video/gif — обычный перекод
+            cmd = ["ffmpeg", "-y", "-i", path,
+                   "-vf", "scale=-2:720,fps=30",
+                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                   "-c:a", "aac", "-b:a", "96k",
+                   "-movflags", "+faststart", out]
+        await asyncio.get_event_loop().run_in_executor(None, _run, cmd)
+        return out
+    except Exception as e:
+        log.warning(f"convert_media: {e}")
+        return None
+
+
 def list_voice_files():
     vd = os.path.join(DATA_DIR, "voice")
     if not os.path.exists(vd):
@@ -782,6 +852,46 @@ if dp:
                                           callback_data="vpick_play:__toggle_vol__")])
         await m.answer("Выбери mp3:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
+    @dp.message(F.text == "🎬 Медиа в войс")
+    async def mv(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        if not PYTGCALLS_OK:
+            await m.answer(f"pytgcalls: {PYTG_ERR}"); return
+        files = list_media_files()
+        rows = []
+        for fname in files[:12]:
+            p = os.path.join(MEDIA_DIR, fname)
+            try: sz = os.path.getsize(p) // 1024
+            except Exception: sz = 0
+            k = media_kind(p)
+            icon = {"image": "🖼", "video": "🎥", "gif": "🎞", "tgs": "🌟"}.get(k, "📄")
+            rows.append([InlineKeyboardButton(
+                text=f"{icon} {fname[:33]} ({sz}K)",
+                callback_data=f"mpick_play:{fname}")])
+        rows.append([InlineKeyboardButton(text="📥 Загрузить новое",
+                                          callback_data="mpick_play:__upload__")])
+        await m.answer("Выбери медиа:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+    @dp.message(F.text == "🎬 Медиа на N сек")
+    async def mvn(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        if not PYTGCALLS_OK:
+            await m.answer(f"pytgcalls: {PYTG_ERR}"); return
+        files = list_media_files()
+        rows = []
+        for fname in files[:12]:
+            p = os.path.join(MEDIA_DIR, fname)
+            try: sz = os.path.getsize(p) // 1024
+            except Exception: sz = 0
+            k = media_kind(p)
+            icon = {"image": "🖼", "video": "🎥", "gif": "🎞", "tgs": "🌟"}.get(k, "📄")
+            rows.append([InlineKeyboardButton(
+                text=f"{icon} {fname[:33]} ({sz}K)",
+                callback_data=f"mpick_timed:{fname}")])
+        rows.append([InlineKeyboardButton(text="📥 Загрузить новое",
+                                          callback_data="mpick_timed:__upload__")])
+        await m.answer("Выбери медиа:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
     @dp.message(F.text == "💬 Написать")
     async def wr(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
@@ -884,7 +994,7 @@ if dp:
         except Exception as e:
             await m.answer(f"ошибка: {e}")
 
-    @dp.message(F.document | F.audio | F.voice)
+    @dp.message(F.document | F.audio | F.voice | F.photo | F.video | F.animation | F.sticker)
     async def doc(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
         st = ADMIN_STATE.get(m.from_user.id, {})
@@ -985,6 +1095,15 @@ if dp:
             link = st.get("link")
             mp3p = st.get("mp3")
             await do_voice_play(cbq.from_user.id, link, sids, mp3p)
+        elif act == "media_play":
+            link = st.get("link")
+            path = st.get("media")
+            await do_media_play(cbq.from_user.id, link, sids, path, timed_secs=None)
+        elif act == "media_timed_play":
+            link = st.get("link")
+            path = st.get("media")
+            secs = st.get("secs", 60)
+            await do_media_play(cbq.from_user.id, link, sids, path, timed_secs=secs)
         elif act == "vj_timed":
             link = st.get("link")
             secs = st.get("secs", 60)
@@ -1025,6 +1144,28 @@ if dp:
         elif a == "voice_link_mp3":
             st["link"] = m.text.strip()
             await m.answer("Выбери сессии:", reply_markup=sessions_kb("mp3go", "all"))
+
+        elif a == "media_link":
+            st["link"] = m.text.strip()
+            st["a"] = "media_sessions"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer("Выбери сессии:", reply_markup=sessions_kb("media_play", "all"))
+
+        elif a == "media_timed_link":
+            st["link"] = m.text.strip()
+            st["a"] = "media_timed_secs"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer("Сколько секунд играть?")
+
+        elif a == "media_timed_secs":
+            try:
+                st["secs"] = int(m.text.strip())
+            except ValueError:
+                await m.answer("нужно число"); return
+            st["a"] = "media_timed_sessions"
+            ADMIN_STATE[m.from_user.id] = st
+            await m.answer(f"ок, {st['secs']} сек. Выбери сессии:",
+                           reply_markup=sessions_kb("media_timed_play", "all"))
 
         elif a == "voice_timed_link":
             st["link"] = m.text.strip()
