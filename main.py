@@ -1854,11 +1854,11 @@ async def marvel_get_voice(text: str):
     c.add_event_handler(on_new, _ev.NewMessage(chats=bot_ent.id))
     try:
         await c.send_message(bot_ent, "/start")
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.25)
         await c.send_message(bot_ent, "🎙 Текст в голос")
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.25)
         await c.send_message(bot_ent, VOICE_TTS.get("marvel_voice_name", "гандон"))
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.25)
         await c.send_message(bot_ent, text)
         log.info(f"marvel: отправил '{text[:40]}'")
         try:
