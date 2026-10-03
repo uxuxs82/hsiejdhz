@@ -44,22 +44,15 @@ except Exception as _e:
 socket.setdefaulttimeout(20)
 
 # ==================== ENV ====================
-CFG = {}
-_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-try:
-    with open(_cfg_path, "r", encoding="utf-8") as _f:
-        CFG = json.load(_f)
-except Exception as _e:
-    print(f"config.json: {_e}")
-
-API_ID = int(CFG.get("API_ID", 0))
-API_HASH = CFG.get("API_HASH", "")
-ANYMODEL_API_KEY = os.environ.get("ANYMODEL_API_KEY") or CFG.get("ANYMODEL_API_KEY", "")
-ANYMODEL_BASE_URL = os.environ.get("ANYMODEL_BASE_URL") or CFG.get("ANYMODEL_BASE_URL", "https://anymodel.org/v1")
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or CFG.get("BOT_TOKEN", "")
-ADMIN_ID = int(CFG.get("ADMIN_ID", "297562307"))
-AI_SESSION_ID = CFG.get("AI_SESSION_ID", "8284866397")
-AI_NAME = CFG.get("MY_NAME", "vortex")
+# ==== все секреты ТОЛЬКО из env ====
+API_ID = int(os.environ.get("API_ID", "0"))
+API_HASH = os.environ.get("API_HASH", "")
+ANYMODEL_API_KEY = os.environ.get("ANYMODEL_API_KEY", "")
+ANYMODEL_BASE_URL = os.environ.get("ANYMODEL_BASE_URL", "https://anymodel.org/v1")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "297562307"))
+AI_SESSION_ID = os.environ.get("AI_SESSION_ID", "8284866397")
+AI_NAME = os.environ.get("MY_NAME", "vortex")
 
 DATA_DIR = "/data"
 try: os.makedirs(DATA_DIR, exist_ok=True)
@@ -160,20 +153,21 @@ def save_json(path, obj):
 
 # ==================== СЕССИИ ====================
 def scan_env_sessions():
-    """Сессии: SESSIONS_JSON (env) -> SESSION_xxx (env) -> config.json"""
+    """Сессии ТОЛЬКО из env.
+    SESSIONS_JSON - одна переменная со словарём {sid: string}
+    или SESSION_<id> - по одной переменной на сессию."""
     raw = os.environ.get("SESSIONS_JSON")
     if raw:
         try:
             d = json.loads(raw)
             return {str(k): str(v) for k, v in d.items() if v}
         except Exception as e:
-            log.warning(f"SESSIONS_JSON parse: {e}")
+            log.warning(f"SESSIONS_JSON: {e}")
     out = {}
     for k, v in os.environ.items():
         if k.startswith("SESSION_") and v and len(v) > 50:
             out[k[len("SESSION_"):]] = v.strip()
-    if out:
-        return out
+    return out
     return {str(k): str(v) for k, v in CFG.get("SESSIONS", {}).items() if v}
 
 
