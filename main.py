@@ -1963,9 +1963,9 @@ async def main():
             from telethon import events as _ev
             _vc.add_event_handler(voice_tts_dm_handler,
                                   _ev.NewMessage(func=lambda e: e.is_private))
-            log.info(\"vortex: ЛС TTS handler навешен\")
+            log.info("vortex: ЛС TTS handler навешен")
         except Exception as _e:
-            log.warning(f\"add_event_handler: {_e}\")
+            log.warning(f"add_event_handler: {_e}")
 
     if not CLIENTS:
         log.error("нет сессий")
