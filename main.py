@@ -1134,7 +1134,7 @@ async def do_voice_join(uid, link, sids):
             await bot.send_message(uid, f"✓ {CLIENT_META[sid]['name']} вошёл в войс")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
-        await asyncio.sleep(random.uniform(2.0, 4.0))
+        await asyncio.sleep(1.0)
 
 
 async def do_voice_leave(uid, link, sids):
@@ -1183,7 +1183,7 @@ async def do_voice_join_timed(uid, link, sids, secs):
             await bot.send_message(uid, f"✓ {CLIENT_META[sid]['name']} зашёл в войс на {secs}с")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
-        await asyncio.sleep(random.uniform(2.0, 4.0))
+        await asyncio.sleep(1.0)
 
     if not entered:
         return
@@ -1227,7 +1227,7 @@ async def do_voice_play_timed(uid, link, sids, mp3, secs):
             await bot.send_message(uid, f"▶ {CLIENT_META[sid]['name']} играет {secs}с")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
-        await asyncio.sleep(random.uniform(2.0, 4.0))
+        await asyncio.sleep(1.0)
 
     if not entered:
         return
@@ -1260,7 +1260,7 @@ async def do_voice_play(uid, link, sids, mp3):
             await bot.send_message(uid, f"▶ {CLIENT_META[sid]['name']}")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
-        await asyncio.sleep(random.uniform(1.0, 2.0))
+        await asyncio.sleep(1.0)
 
 
 # ==================== MAIN ====================
