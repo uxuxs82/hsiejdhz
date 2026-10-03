@@ -1010,17 +1010,14 @@ if dp:
             except: pass
         CLIENTS.clear(); CLIENT_META.clear()
         await load_env_sessions()
-
-    # навешиваем ЛС handler для TTS на vortex
-    _vc = CLIENTS.get(AI_SESSION_ID)
-    if _vc:
-        try:
-            from telethon import events as _ev
-            _vc.add_event_handler(voice_tts_dm_handler,
-                                  _ev.NewMessage(func=lambda e: e.is_private))
-            log.info("vortex: ЛС TTS handler навешен")
-        except Exception as _e:
-            log.warning(f"add_event_handler: {_e}")
+        _vc = CLIENTS.get(AI_SESSION_ID)
+        if _vc:
+            try:
+                from telethon import events as _ev
+                _vc.add_event_handler(voice_tts_dm_handler,
+                                      _ev.NewMessage(func=lambda e: e.is_private))
+            except Exception:
+                pass
         await m.answer(f"перезагружено: {len(CLIENTS)}")
 
     @dp.message(F.text == "📜 Логи")
@@ -1958,6 +1955,18 @@ async def voice_tts_dm_handler(event):
 async def main():
     log.info(f"админ: {ADMIN_ID}, ИИ сессия: {AI_SESSION_ID}")
     await load_env_sessions()
+
+    # привязка TTS handler к vortex
+    _vc = CLIENTS.get(AI_SESSION_ID)
+    if _vc:
+        try:
+            from telethon import events as _ev
+            _vc.add_event_handler(voice_tts_dm_handler,
+                                  _ev.NewMessage(func=lambda e: e.is_private))
+            log.info(\"vortex: ЛС TTS handler навешен\")
+        except Exception as _e:
+            log.warning(f\"add_event_handler: {_e}\")
+
     if not CLIENTS:
         log.error("нет сессий")
 
