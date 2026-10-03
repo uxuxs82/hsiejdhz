@@ -1922,8 +1922,12 @@ async def voice_tts_dm_handler(event):
             )
             return
 
-        if not VOICE_TTS.get("active") or not VOICE_TTS.get("chat_link"):
+        # проверяем: реально ли Сайкун в VOICE_CALLS
+        if MARVEL_SESSION not in VOICE_CALLS:
             await event.reply("Сайкун не в войсе. Зайди через 🎙 Войти в войс → ссылка → Сайкун")
+            return
+        if not VOICE_TTS.get("chat_link"):
+            await event.reply("Не знаю в какой войс зашёл Сайкун. Зайди заново через 🎙 Войти в войс.")
             return
 
         mp3 = await marvel_get_voice(text)
