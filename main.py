@@ -169,6 +169,21 @@ async def convert_media(path):
 
 
 
+def mp3_duration(path):
+    """Длительность медиа в секундах через ffprobe."""
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            stderr=subprocess.DEVNULL, timeout=15
+        ).decode().strip()
+        return float(out)
+    except Exception as e:
+        log.warning(f"ffprobe: {e}")
+        return 0
+
+
 def list_voice_files():
     vd = os.path.join(DATA_DIR, "voice")
     if not os.path.exists(vd):
