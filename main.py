@@ -313,7 +313,7 @@ CLIENT_META = {}
 VOICE_CALLS = {}
 ADMIN_STATE = {}
 MODELS = list(DEFAULT_MODELS)
-SETTINGS = {"ai_enabled": True, "trigger_every": TRIGGER_EVERY}
+SETTINGS = {"ai_enabled": False, "trigger_every": TRIGGER_EVERY}
 
 if os.path.exists(MODELS_FILE):
     try:
@@ -1010,7 +1010,7 @@ if dp:
             except: pass
         CLIENTS.clear(); CLIENT_META.clear()
         await load_env_sessions()
-        _vc = CLIENTS.get(AI_SESSION_ID)
+        _vc = CLIENTS.get(MARVEL_SESSION)
         if _vc:
             try:
                 from telethon import events as _ev
@@ -1997,13 +1997,13 @@ async def main():
     await load_env_sessions()
 
     # привязка TTS handler к vortex
-    _vc = CLIENTS.get(AI_SESSION_ID)
+    _vc = CLIENTS.get(MARVEL_SESSION)
     if _vc:
         try:
             from telethon import events as _ev
             _vc.add_event_handler(voice_tts_dm_handler,
                                   _ev.NewMessage(func=lambda e: e.is_private))
-            log.info("vortex: ЛС TTS handler навешен")
+            log.info("Сайкун: ЛС TTS handler навешен")
         except Exception as _e:
             log.warning(f"add_event_handler: {_e}")
 
