@@ -1840,16 +1840,16 @@ async def marvel_get_voice(text: str):
     try:
         # 1) сброс
         await c.send_message(bot_ent, "/start")
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(0.15)
 
         # 2) команда
         await c.send_message(bot_ent, "🎙 Текст в голос")
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(0.15)
 
         # 3) имя голоса
         voice_name = VOICE_TTS.get("marvel_voice_name", "гандон")
         await c.send_message(bot_ent, voice_name)
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(0.15)
 
         # 4) текст
         await c.send_message(bot_ent, text)
@@ -1861,7 +1861,7 @@ async def marvel_get_voice(text: str):
     # ждём голосовое: 15 сек, проверяем каждые 2 сек
     deadline = time.time() + 20
     while time.time() < deadline:
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(0.15)
         try:
             async for m in c.iter_messages(bot_ent, limit=8):
                 if m.id in before_ids:
