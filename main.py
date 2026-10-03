@@ -1227,7 +1227,7 @@ async def do_voice_play_timed(uid, link, sids, mp3, secs):
             await bot.send_message(uid, f"▶ {CLIENT_META[sid]['name']} играет {secs}с")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.3)
 
     if not entered:
         return
