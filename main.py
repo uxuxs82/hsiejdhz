@@ -745,8 +745,10 @@ def sessions_kb(action, suffix="all"):
     for sid in list_sids():
         name = CLIENT_META[sid]["name"]
         row.append(InlineKeyboardButton(text=name[:20], callback_data=f"{action}:{sid}"))
-        if len(row) == 2: rows.append(row); row = []
-    if row: rows.append(row)
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
     if suffix == "all":
         rows.append([InlineKeyboardButton(text="✅ ВСЕ СЕССИИ", callback_data=f"{action}:__all__")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -960,6 +962,32 @@ if dp:
         except Exception as e:
             await m.answer(f"не вышло: {e}")
 
+    @dp.message(Command("grab"))
+    async def cmd_grab(m: at.Message):
+        """Скачивает последнее медиа из ЛС с vortex (сессия AI_SESSION_ID).
+        Используй: перешли файл vortex в лс, потом /grab в боте."""
+        if m.from_user.id != ADMIN_ID: return
+        c = CLIENTS.get(AI_SESSION_ID)
+        if not c:
+            await m.answer(f"vortex ({AI_SESSION_ID}) не онлайн"); return
+        await m.answer("ищу последнее медиа в ЛС vortex...")
+        try:
+            found = None
+            async for msg in c.iter_messages("me", limit=30):
+                if msg.media and not getattr(msg, "web_preview", None):
+                    found = msg
+                    break
+            if not found:
+                await m.answer("не нашёл медиа в последних 30 сообщениях"); return
+            path = await found.download_media(file=MEDIA_DIR)
+            if not path:
+                await m.answer("не смог скачать"); return
+            sz = os.path.getsize(path)
+            kind = media_kind(path)
+            await m.answer(f"✓ сохранено: {os.path.basename(path)} ({kind}, {sz // 1024}K)")
+        except Exception as e:
+            await m.answer(f"ошибка: {e}")
+
     @dp.message(Command("files"))
     async def cmd_files(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
@@ -1087,7 +1115,7 @@ if dp:
             if val == "__upload__":
                 a = "media_upload" if mode == "play" else "media_timed_upload"
                 ADMIN_STATE[cbq.from_user.id] = {"a": a}
-                await cbq.message.answer("Кинь медиа (фото/видео/gif/стикер):")
+                await cbq.message.answer("Кинь медиа (фото/видео/gif/стикер).\n⚠️ Если файл > 20 МБ — перешли его vortex в ЛС и напиши /grab")
             else:
                 path = os.path.join(MEDIA_DIR, val)
                 if not os.path.exists(path):
