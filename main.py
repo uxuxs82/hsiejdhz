@@ -84,7 +84,7 @@ except Exception as _e:
 
 # ==== громкость ====
 VOLUME_LOUD = {"on": False}
-VOLUME_BOOST = 3.0
+VOLUME_BOOST = 5.0
 
 
 def list_voice_files():
@@ -1325,7 +1325,7 @@ async def do_voice_play_timed(uid, link, sids, mp3, secs):
             await bot.send_message(uid, f"▶ {CLIENT_META[sid]['name']} играет {secs}с")
         except Exception as ex:
             await bot.send_message(uid, f"✗ {CLIENT_META[sid]['name']}: {ex}")
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.1)
 
     if not entered:
         return
