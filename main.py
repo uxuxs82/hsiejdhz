@@ -118,7 +118,7 @@ def media_kind(path):
 
 
 async def convert_media(path):
-    """Приводит любой файл к mp4 H.264 720p 30fps для войса."""
+    """Приводит любой файл к mp4 H.264 480p для войса (Railway-friendly)."""
     kind = media_kind(path)
     out = path + ".tg.mp4"
     try:
@@ -128,33 +128,45 @@ async def convert_media(path):
         pass
 
     if kind == "tgs":
-        # tgs — gzip-json lottie, без rlottie не конвертнём
         return None
 
     import subprocess
 
-    def _run(cmd, timeout=600):
-        subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=timeout)
+    def _run(cmd, timeout):
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+            if r.returncode != 0:
+                err = r.stderr.decode(errors="ignore")[-500:]
+                log.warning(f"ffmpeg fail: {err}")
+                return False, err
+            return True, ""
+        except subprocess.TimeoutExpired:
+            return False, "timeout"
+        except Exception as e:
+            return False, str(e)
 
     try:
         if kind == "image":
-            # из картинки — 10-секундное видео
-            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", path, "-t", "10",
-                   "-vf", "scale=720:-2,fps=30,format=yuv420p",
-                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-                   "-movflags", "+faststart", out]
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", path, "-t", "5",
+                   "-vf", "scale=480:-2,fps=24,format=yuv420p",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                   "-movflags", "+faststart", "-threads", "1", out]
+            ok, err = await asyncio.get_event_loop().run_in_executor(None, _run, cmd, 120)
         else:
-            # video/gif — обычный перекод
             cmd = ["ffmpeg", "-y", "-i", path,
-                   "-vf", "scale=-2:720,fps=30",
-                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-                   "-c:a", "aac", "-b:a", "96k",
-                   "-movflags", "+faststart", out]
-        await asyncio.get_event_loop().run_in_executor(None, _run, cmd)
-        return out
+                   "-vf", "scale=480:-2,fps=24",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                   "-c:a", "aac", "-b:a", "64k", "-ac", "1",
+                   "-movflags", "+faststart", "-threads", "1", out]
+            ok, err = await asyncio.get_event_loop().run_in_executor(None, _run, cmd, 600)
+        if ok and os.path.exists(out) and os.path.getsize(out) > 500:
+            return out
+        log.warning(f"convert_media failed: {err}")
+        return None
     except Exception as e:
         log.warning(f"convert_media: {e}")
         return None
+
 
 
 def list_voice_files():
@@ -1623,7 +1635,7 @@ async def do_media_play(uid, link, sids, media_path, timed_secs=None):
     await bot.send_message(uid, f"конвертирую ({kind})...")
     mp4 = await convert_media(media_path)
     if not mp4:
-        await bot.send_message(uid, "не удалось конвертнуть"); return
+        await bot.send_message(uid, "не удалось конвертнуть (см. логи Railway)"); return
     dur = mp3_duration(mp4)
     if dur <= 0: dur = timed_secs if timed_secs else 30
     entered = []
