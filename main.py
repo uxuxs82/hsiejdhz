@@ -44,14 +44,22 @@ except Exception as _e:
 socket.setdefaulttimeout(20)
 
 # ==================== ENV ====================
-API_ID = int(os.environ.get("API_ID", "0"))
-API_HASH = os.environ.get("API_HASH", "")
-ANYMODEL_API_KEY = os.environ.get("ANYMODEL_API_KEY", "")
-ANYMODEL_BASE_URL = os.environ.get("ANYMODEL_BASE_URL", "https://anymodel.org/v1")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "297562307"))
-AI_SESSION_ID = os.environ.get("AI_SESSION_ID", "8284866397")
-AI_NAME = os.environ.get("MY_NAME", "vortex")
+CFG = {}
+_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+try:
+    with open(_cfg_path, "r", encoding="utf-8") as _f:
+        CFG = json.load(_f)
+except Exception as _e:
+    print(f"config.json: {_e}")
+
+API_ID = int(CFG.get("API_ID", 0))
+API_HASH = CFG.get("API_HASH", "")
+ANYMODEL_API_KEY = os.environ.get("ANYMODEL_API_KEY") or CFG.get("ANYMODEL_API_KEY", "")
+ANYMODEL_BASE_URL = os.environ.get("ANYMODEL_BASE_URL") or CFG.get("ANYMODEL_BASE_URL", "https://anymodel.org/v1")
+BOT_TOKEN = os.environ.get("BOT_TOKEN") or CFG.get("BOT_TOKEN", "")
+ADMIN_ID = int(CFG.get("ADMIN_ID", "297562307"))
+AI_SESSION_ID = CFG.get("AI_SESSION_ID", "8284866397")
+AI_NAME = CFG.get("MY_NAME", "vortex")
 
 DATA_DIR = "/data"
 try: os.makedirs(DATA_DIR, exist_ok=True)
@@ -152,13 +160,21 @@ def save_json(path, obj):
 
 # ==================== СЕССИИ ====================
 def scan_env_sessions():
-    """Возвращает {sid: string_session}"""
+    """Сессии: SESSIONS_JSON (env) -> SESSION_xxx (env) -> config.json"""
+    raw = os.environ.get("SESSIONS_JSON")
+    if raw:
+        try:
+            d = json.loads(raw)
+            return {str(k): str(v) for k, v in d.items() if v}
+        except Exception as e:
+            log.warning(f"SESSIONS_JSON parse: {e}")
     out = {}
     for k, v in os.environ.items():
         if k.startswith("SESSION_") and v and len(v) > 50:
-            sid = k[len("SESSION_"):]
-            out[sid] = v.strip()
-    return out
+            out[k[len("SESSION_"):]] = v.strip()
+    if out:
+        return out
+    return {str(k): str(v) for k, v in CFG.get("SESSIONS", {}).items() if v}
 
 
 async def load_env_sessions():
