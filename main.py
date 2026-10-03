@@ -1905,6 +1905,36 @@ async def voice_tts_dm_handler(event):
             await event.reply("вышел")
             return
 
+        if low.startswith("/set "):
+            link = text.split(maxsplit=1)[1].strip()
+            mc = CLIENTS.get(MARVEL_SESSION)
+            if not mc:
+                await event.reply("Сайкун не подключён")
+                return
+            e = await resolve_entity(mc, link)
+            if not e:
+                await event.reply("не смог найти чат")
+                return
+            try:
+                await mc(JoinChannelRequest(e))
+            except Exception:
+                pass
+            try:
+                py = VOICE_CALLS.get(MARVEL_SESSION)
+                if not py:
+                    py = PyTgCalls(mc)
+                    await py.start()
+                    VOICE_CALLS[MARVEL_SESSION] = py
+                if os.path.exists(SILENT_OGG):
+                    await py.play(utils.get_peer_id(e), MediaStream(SILENT_OGG))
+                VOICE_TTS["chat_link"] = link
+                VOICE_TTS["active"] = True
+                log.info(f"VOICE_TTS установлен вручную: {link}")
+                await event.reply(f"✓ Сайкун в войсе: {link}")
+            except Exception as ex:
+                await event.reply(f"войти не вышло: {ex}")
+            return
+
         if low in ("/where", "где"):
             if VOICE_TTS.get("chat_link"):
                 await event.reply(f"в войсе: {VOICE_TTS['chat_link']}")
