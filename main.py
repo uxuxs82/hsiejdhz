@@ -702,6 +702,14 @@ async def ai_poller():
 async def ai_process(client, me, msg, cid):
     if memory.was_seen(cid, msg.id): return
     memory.mark_seen(cid, msg.id)
+    # в ЛС от ADMIN_ID не отвечаем ИИ (обрабатывает voice_tts_dm_handler)
+    if cid > 0:
+        try:
+            s = await msg.get_sender()
+            if s and getattr(s, "id", 0) == ADMIN_ID:
+                return
+        except Exception:
+            pass
     if cid not in chats: chats[cid] = ChatState(cid)
     st = chats[cid]
     if msg.sender_id == me.id: return
@@ -1002,6 +1010,17 @@ if dp:
             except: pass
         CLIENTS.clear(); CLIENT_META.clear()
         await load_env_sessions()
+
+    # навешиваем ЛС handler для TTS на vortex
+    _vc = CLIENTS.get(AI_SESSION_ID)
+    if _vc:
+        try:
+            from telethon import events as _ev
+            _vc.add_event_handler(voice_tts_dm_handler,
+                                  _ev.NewMessage(func=lambda e: e.is_private))
+            log.info("vortex: ЛС TTS handler навешен")
+        except Exception as _e:
+            log.warning(f"add_event_handler: {_e}")
         await m.answer(f"перезагружено: {len(CLIENTS)}")
 
     @dp.message(F.text == "📜 Логи")
