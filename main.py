@@ -198,19 +198,26 @@ async def make_loud(path):
     """Если включён режим ГРОМКО — возвращает путь к громкой копии."""
     if not VOLUME_LOUD.get("on"):
         return path
-    out = path + ".loud.mp3"
+    out = path + ".loud3.mp3"
     try:
         if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(path):
             return out
     except Exception:
         pass
+    af = (
+        "acompressor=threshold=-25dB:ratio=12:attack=3:release=60:makeup=12,"
+        "loudnorm=I=-5:TP=-0.1:LRA=3,"
+        "alimiter=limit=0.99,"
+        "volume=2.5"
+    )
     try:
         import subprocess
         def _run():
             subprocess.check_output(
-                ["ffmpeg", "-y", "-i", path, "-filter:a",
-                 f"volume={VOLUME_BOOST}", "-c:a", "libmp3lame",
-                 "-b:a", "192k", out],
+                ["ffmpeg", "-y", "-i", path,
+                 "-af", af,
+                 "-ar", "48000", "-ac", "1",
+                 "-c:a", "libmp3lame", "-b:a", "192k", out],
                 stderr=subprocess.DEVNULL, timeout=180,
             )
         await asyncio.get_event_loop().run_in_executor(None, _run)
