@@ -260,6 +260,8 @@ MARVEL_BOT_USERNAME = "MarvelVoiceBot"
 MARVEL_SESSION = "8414522026"
 MARVEL_TIMEOUT = 20
 
+ACTIVE_VOICE_SESSION = {"sid": None}  # None -> MARVEL_SESSION по умолчанию
+
 VOICE_TTS = {
     "chat_link": None,
     "marvel_voice_name": "гандон",
@@ -1816,11 +1818,46 @@ async def do_voice_play(uid, link, sids, mp3):
 
 
 # ==================== MAIN ====================
+def find_session_by_name(query: str):
+    """Ищет сессию по приблизительному нику. Возвращает sid или None."""
+    q = query.lower().strip().lstrip("@")
+    if not q:
+        return None
+    # точное совпадение имени
+    for sid, meta in CLIENT_META.items():
+        nm = (meta.get("name") or "").lower()
+        if nm == q:
+            return sid
+    # частичное — начало имени
+    for sid, meta in CLIENT_META.items():
+        nm = (meta.get("name") or "").lower()
+        if nm.startswith(q):
+            return sid
+    # частичное — вхождение
+    for sid, meta in CLIENT_META.items():
+        nm = (meta.get("name") or "").lower()
+        if q in nm:
+            return sid
+    # по id
+    if q.isdigit() and q in CLIENT_META:
+        return q
+    return None
+
+
+def get_voice_sid():
+    """Возвращает активную сессию для озвучки (по умолчанию Сайкун)."""
+    sid = ACTIVE_VOICE_SESSION.get("sid")
+    if sid and sid in CLIENTS:
+        return sid
+    return MARVEL_SESSION
+
+
 async def marvel_get_voice(text: str):
     """Отправляет Marvel, ждёт голосовое через event handler (моментально)."""
-    c = CLIENTS.get(MARVEL_SESSION)
+    vid = get_voice_sid()
+    c = CLIENTS.get(vid)
     if not c:
-        log.warning(f"marvel: нет сессии {MARVEL_SESSION}")
+        log.warning(f"marvel: нет сессии {vid}")
         return None
     try:
         bot_ent = await c.get_entity(MARVEL_BOT_USERNAME)
@@ -1913,9 +1950,10 @@ async def voice_tts_dm_handler(event):
 
         if low.startswith("/set "):
             link = text.split(maxsplit=1)[1].strip()
-            mc = CLIENTS.get(MARVEL_SESSION)
+            vid = get_voice_sid()
+            mc = CLIENTS.get(vid)
             if not mc:
-                await event.reply("Сайкун не подключён")
+                await event.reply(f"сессия {vid} не подключена")
                 return
             e = await resolve_entity(mc, link)
             if not e:
@@ -1926,19 +1964,42 @@ async def voice_tts_dm_handler(event):
             except Exception:
                 pass
             try:
-                py = VOICE_CALLS.get(MARVEL_SESSION)
+                py = VOICE_CALLS.get(vid)
                 if not py:
                     py = PyTgCalls(mc)
                     await py.start()
-                    VOICE_CALLS[MARVEL_SESSION] = py
+                    VOICE_CALLS[vid] = py
                 if os.path.exists(SILENT_OGG):
                     await py.play(utils.get_peer_id(e), MediaStream(SILENT_OGG))
                 VOICE_TTS["chat_link"] = link
                 VOICE_TTS["active"] = True
-                log.info(f"VOICE_TTS установлен вручную: {link}")
-                await event.reply(f"✓ Сайкун в войсе: {link}")
+                log.info(f"VOICE_TTS установлен: {vid} -> {link}")
+                meta = CLIENT_META.get(vid, {})
+                nm = meta.get("name", vid)
+                await event.reply(f"✓ {nm} в войсе: {link}")
             except Exception as ex:
                 await event.reply(f"войти не вышло: {ex}")
+            return
+
+        if low.startswith("/m "):
+            query = text.split(maxsplit=1)[1].strip()
+            sid = find_session_by_name(query)
+            if not sid:
+                await event.reply(f"не нашёл сессию по '{query}'")
+                return
+            ACTIVE_VOICE_SESSION["sid"] = sid
+            meta = CLIENT_META.get(sid, {})
+            nm = meta.get("name", sid)
+            await event.reply(f"✓ активная сессия: {nm} ({sid})\nТеперь озвучиваю через него. /set <ссылка> чтобы выбрать его войс.")
+            return
+
+        if low == "/who" or low == "/whoami":
+            vid = get_voice_sid()
+            meta = CLIENT_META.get(vid, {})
+            nm = meta.get("name", vid)
+            in_voice = "в войсе" if vid in VOICE_CALLS else "не в войсе"
+            link = VOICE_TTS.get("chat_link") or "не установлен"
+            await event.reply(f"активная: {nm} ({vid})\nстатус: {in_voice}\nвойс: {link}")
             return
 
         if low in ("/where", "где"):
@@ -1950,17 +2011,20 @@ async def voice_tts_dm_handler(event):
 
         if low == "/help":
             await event.reply(
-                "пиши текст — озвучу голосом Сайкуна в его войсе.\n"
-                "Сайкун должен быть в войсе (через 🎙 Войти в войс → ссылка → Сайкун).\n\n"
+                "пиши текст — озвучу выбранным аккаунтом в его войсе.\n\n"
+                "/m <ник> — выбрать аккаунт для озвучки\n"
+                "/who — кто сейчас активен\n"
+                "/set <ссылка> — зайти активным в войс\n"
                 "/voice <имя> — сменить голос Marvel\n"
-                "/where — где сейчас\n"
-                "/stop — выйти"
+                "/stop — выйти из войса"
             )
             return
 
-        # проверяем: реально ли Сайкун в VOICE_CALLS
-        if MARVEL_SESSION not in VOICE_CALLS:
-            await event.reply("Сайкун не в войсе. Зайди через 🎙 Войти в войс → ссылка → Сайкун")
+        vid = get_voice_sid()
+        if vid not in VOICE_CALLS:
+            meta = CLIENT_META.get(vid, {})
+            nm = meta.get("name", vid)
+            await event.reply(f"{nm} не в войсе. Зайди через 🎙 Войти в войс → ссылка → {nm}")
             return
         if not VOICE_TTS.get("chat_link"):
             await event.reply("Не знаю в какой войс зашёл Сайкун. Зайди заново через 🎙 Войти в войс.")
@@ -1970,20 +2034,21 @@ async def voice_tts_dm_handler(event):
         if not mp3:
             await event.reply("Marvel не ответил")
             return
-        mc = CLIENTS.get(MARVEL_SESSION)
+        vid = get_voice_sid()
+        mc = CLIENTS.get(vid)
         if not mc:
-            await event.reply("Сайкун не подключён")
+            await event.reply(f"сессия {vid} не подключена")
             return
         e = await resolve_entity(mc, VOICE_TTS["chat_link"])
         if not e:
             await event.reply("чат пропал")
             return
         try:
-            py = VOICE_CALLS.get(MARVEL_SESSION)
+            py = VOICE_CALLS.get(vid)
             if not py:
                 py = PyTgCalls(mc)
                 await py.start()
-                VOICE_CALLS[MARVEL_SESSION] = py
+                VOICE_CALLS[vid] = py
             await py.play(utils.get_peer_id(e), MediaStream(mp3))
             await event.reply("▶")
         except Exception as ex:
