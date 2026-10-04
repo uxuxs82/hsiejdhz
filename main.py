@@ -1854,10 +1854,10 @@ def get_voice_sid():
 
 async def marvel_get_voice(text: str):
     """Отправляет Marvel, ждёт голосовое через event handler (моментально)."""
-    vid = get_voice_sid()
-    c = CLIENTS.get(vid)
+    # Marvel всегда через Сайкуна
+    c = CLIENTS.get(MARVEL_SESSION)
     if not c:
-        log.warning(f"marvel: нет сессии {vid}")
+        log.warning(f"marvel: нет сессии {MARVEL_SESSION}")
         return None
     try:
         bot_ent = await c.get_entity(MARVEL_BOT_USERNAME)
@@ -2011,7 +2011,8 @@ async def voice_tts_dm_handler(event):
 
         if low == "/help":
             await event.reply(
-                "пиши текст — озвучу выбранным аккаунтом в его войсе.\n\n"
+                "пиши текст — озвучу выбранным аккаунтом в его войсе.\n"
+                "Marvel-голос всегда через Сайкуна (он знает голос).\n\n"
                 "/m <ник> — выбрать аккаунт для озвучки\n"
                 "/who — кто сейчас активен\n"
                 "/set <ссылка> — зайти активным в войс\n"
