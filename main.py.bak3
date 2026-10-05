@@ -158,15 +158,15 @@ async def convert_media(path):
                 "format=yuv420p"
             )
             cmd = ["ffmpeg", "-y", "-loop", "1", "-i", path, "-t", "60",
-                   "-vf", vf, "-an",
+                   "-vf", vf,
                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                    "-movflags", "+faststart", "-threads", "1", out]
             ok, err = await asyncio.get_event_loop().run_in_executor(None, _run, cmd, 180)
         else:
             cmd = ["ffmpeg", "-y", "-i", path,
                    "-vf", "scale=480:-2,fps=24",
-                   "-an",
                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                   "-c:a", "aac", "-b:a", "64k", "-ac", "1",
                    "-movflags", "+faststart", "-threads", "1", out]
             ok, err = await asyncio.get_event_loop().run_in_executor(None, _run, cmd, 600)
         if ok and os.path.exists(out) and os.path.getsize(out) > 500:
@@ -249,6 +249,12 @@ POLL_LIMIT = 15
 AI_TIMEOUT = 30
 MAX_AI_TOTAL = 90
 
+DEFAULT_MODELS = [
+    "qwen/qwen3.7-max","glm/glm-5.3-flash","ds/deepseek-v4-flash",
+    "qwen/qwen3.8-max","qwen/qwen3.7-plus","ag/gemini-2.5-flash",
+    "ag/gemini-pro-agent","kmc/kimi-for-coding","glm/glm-5.2",
+    "glm/glm-5.1","glm/glm-5","glm/glm-4.7","cx/gpt-5.6-luna","cx/gpt-6-luna",
+]
 MODELS_FILE = os.path.join(DATA_DIR, "models.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
@@ -268,16 +274,7 @@ MARVEL_TIMEOUT = 20
 ACTIVE_VOICE_SESSION = {"sid": None}  # None -> MARVEL_SESSION по умолчанию
 
 # loop-режим
-LOOP_STATE = {"on": True}
-
-# монитор голосовых чатов (до 5, по приоритету)
-MONITOR = {
-    "chats": [None, None, None, None, None],   # ссылки
-    "media": None,       # путь к картинке/видео
-    "on": False,
-    "current": None,     # в каком чате сейчас играем
-    "task": None,        # asyncio task
-}   # включён по умолчанию
+LOOP_STATE = {"on": True}   # включён по умолчанию
 
 VOICE_TTS = {
     "chat_link": None,
@@ -331,9 +328,13 @@ CLIENTS = {}
 CLIENT_META = {}
 VOICE_CALLS = {}
 ADMIN_STATE = {}
-MODELS = []
+MODELS = list(DEFAULT_MODELS)
 SETTINGS = {"ai_enabled": False, "trigger_every": TRIGGER_EVERY}
 
+if os.path.exists(MODELS_FILE):
+    try:
+        with open(MODELS_FILE) as f: MODELS = json.load(f)
+    except: pass
 if os.path.exists(SETTINGS_FILE):
     try:
         with open(SETTINGS_FILE) as f: SETTINGS.update(json.load(f))
@@ -375,10 +376,7 @@ def scan_env_sessions():
 
 async def load_env_sessions():
     sess = scan_env_sessions()
-    # исключаем Сайкуна и Vortex
-    EXCLUDE = {"8414522026", "8284866397"}
-    sess = {k: v for k, v in sess.items() if k not in EXCLUDE}
-    log.info(f"env сессий после фильтра: {len(sess)}")
+    log.info(f"env сессий: {len(sess)}")
     for sid, ss in sess.items():
         try:
             c = TelegramClient(StringSession(ss), API_ID, API_HASH)
@@ -582,21 +580,237 @@ chats = {}
 ai_lock = asyncio.Lock()
 
 
+def _extract(data):
+    try: m = data["choices"][0]["message"]
+    except: return None
+    if isinstance(m, dict):
+        c = m.get("content")
+        if c and isinstance(c, str) and c.strip(): return c.strip()
+    return None
 
 
+def _try_model(model, prompt):
+    url = ANYMODEL_BASE_URL + "/chat/completions"
+    body = {"model": model,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                         {"role": "user", "content": prompt}],
+            "temperature": 0.7, "stream": False, "max_tokens": 400}
+    headers = {"Content-Type": "application/json",
+               "Authorization": "Bearer " + ANYMODEL_API_KEY,
+               "User-Agent": "Mozilla/5.0"}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as r:
+            d = json.loads(r.read().decode())
+            t = _extract(d); return (t, None) if t else (None, "empty")
+    except urllib.error.HTTPError as e: return None, f"HTTP {e.code}"
+    except Exception as e: return None, str(e)
+
+
+def _ask_sync(prompt):
+    t0 = time.time()
+    for m in MODELS:
+        if time.time() - t0 > MAX_AI_TOTAL: break
+        text, err = _try_model(m, prompt)
+        if text and ("решение" in text.lower() or "реши" in text.lower()):
+            return text
+        log.warning(f"[AI] {m}: {err or 'no format'}")
+    return None
+
+
+async def ask_ai(prompt):
+    return await asyncio.get_event_loop().run_in_executor(None, _ask_sync, prompt)
+
+
+def parse_decision(text):
+    if not text: return None, []
+    num, msgs, mode, cur = None, [], None, []
+    for line in text.split("\n"):
+        low = line.strip().lower()
+        if low.startswith("решение:"):
+            v = line.split(":", 1)[1].strip()
+            if v.lower() in ("нет","no","none","-"): return None, []
+            try: num = int(v.replace("#","").strip())
+            except: num = None
+        elif low.startswith("сообщения:"): mode = "m"
+        elif mode == "m":
+            if line.strip() == "---":
+                if cur: msgs.append(" ".join(cur).strip()); cur = []
+            elif line.strip(): cur.append(line.strip())
+    if cur: msgs.append(" ".join(cur).strip())
+    msgs = [m for m in msgs if m and m.lower() != "нет"]
+    clean = []
+    for m in msgs:
+        m = m.rstrip(".!?,;:")
+        w = m.split()
+        if len(w) > 15: m = " ".join(w[:15])
+        m = m.replace(".","").replace(",","").replace("!","").replace("?","")
+        clean.append(m)
+    return (num, clean[:2]) if num and clean else (None, [])
+
+
+# ==================== ИИ ВОРКЕР ====================
+ai_chat_ids = set()
+
+
+async def ai_poller():
+    client = CLIENTS.get(AI_SESSION_ID)
+    if not client:
+        log.error("vortex не загружен, ИИ отключён"); return
+    me = await client.get_me()
+
+    entities = {}
+    for name in WATCH_CHATS:
+        e = await resolve_entity(client, str(name))
+        if e:
+            try: await client(JoinChannelRequest(e))
+            except: pass
+            entities[utils.get_peer_id(e)] = e
+            ai_chat_ids.add(utils.get_peer_id(e))
+            log.info(f"ИИ слушает {name}")
+
+    # прогрев
+    for cid, e in entities.items():
+        chats[cid] = ChatState(cid)
+        st = chats[cid]
+        try:
+            msgs = []
+            async for m in client.iter_messages(e, limit=100): msgs.append(m)
+            msgs.reverse()
+            for m in msgs:
+                if m.sender_id == me.id: continue
+                t = (m.text or "").strip()
+                if not t: continue
+                memory.mark_seen(cid, m.id)
+                try: sender = await m.get_sender()
+                except: sender = None
+                if not sender: continue
+                name_ = getattr(sender, "first_name", None) or getattr(sender, "title", None) or "?"
+                uid = getattr(sender, "id", 0)
+                un = getattr(sender, "username", "") or ""
+                is_b = bool(getattr(sender, "bot", False)) or un in IGNORED_BOTS
+                st.add(uid, name_, t, m.id, is_bot=is_b, reply_to_id=m.reply_to_msg_id)
+        except Exception as e:
+            log.warning(f"preload {cid}: {e}")
+        st.last_msg_time = time.time()
+        st.last_bot_reply_time = time.time()
+
+    log.info("ИИ воркер запущен")
+
+    while True:
+        if not SETTINGS.get("ai_enabled", True):
+            await asyncio.sleep(2); continue
+        try:
+            for cid, e in list(entities.items()):
+                try:
+                    msgs = []
+                    async for m in client.iter_messages(e, limit=POLL_LIMIT): msgs.append(m)
+                    msgs.reverse()
+                    for m in msgs:
+                        await ai_process(client, me, m, cid)
+                except Exception as ex:
+                    log.error(f"poll {cid}: {ex}")
+        except Exception as e:
+            log.error(f"ai_poller: {e}")
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+async def ai_process(client, me, msg, cid):
+    if memory.was_seen(cid, msg.id): return
+    memory.mark_seen(cid, msg.id)
+    # в ЛС от ADMIN_ID не отвечаем ИИ (обрабатывает voice_tts_dm_handler)
+    if cid > 0:
+        try:
+            s = await msg.get_sender()
+            if s and getattr(s, "id", 0) == ADMIN_ID:
+                return
+        except Exception:
+            pass
+    if cid not in chats: chats[cid] = ChatState(cid)
+    st = chats[cid]
+    if msg.sender_id == me.id: return
+    t = (msg.text or "").strip()
+    if not t: return
+    try: sender = await msg.get_sender()
+    except: sender = None
+    name = (getattr(sender, "first_name", None) or getattr(sender, "title", None) or "?") if sender else "?"
+    uid = sender.id if sender and hasattr(sender, "id") else 0
+    if name.lower() == AI_NAME.lower(): return
+    un = getattr(sender, "username", "") if sender else ""
+    sb = bool(getattr(sender, "bot", False)) if sender else False
+    rt = msg.reply_to_msg_id
+    rtt = memory.is_reply_to_bot(cid, rt) if rt else None
+    if sb or un in IGNORED_BOTS:
+        st.add(uid, name, t, msg.id, is_bot=True, reply_to_id=rt); return
+    memory.add_dialog(cid, uid, name, t)
+    if rtt:
+        n = st.add(uid, name, t, msg.id, reply_to_id=rt)
+        st.force_reply_to = (n, rtt, uid, name)
+        await ai_do(client, st, cid)
+        return
+    skip = len(t) < 4 or not any(c.isalnum() for c in t)
+    if skip: return
+    if rt: st.add(uid, name, t, msg.id, reply_to_id=rt); return
+    st.add(uid, name, t, msg.id, reply_to_id=rt)
+    st.human_count += 1
+    if st.human_count >= SETTINGS.get("trigger_every", TRIGGER_EVERY):
+        st.human_count = 0
+        await ai_do(client, st, cid)
+
+
+async def ai_do(client, st, cid):
+    if st.in_progress: return
+    st.in_progress = True
+    try:
+        force = st.force_reply_to
+        if force: num_f, rtt, uid, uname = force
+        else: num_f, rtt, uid, uname = None, None, 0, "?"
+        tnum = st.last_human_msg_num()
+        if tnum is None: return
+        st.last_processed_id = st.num_to_msg.get(tnum)
+        ctx = st.context_text(tnum, limit=CONTEXT_SIZE)
+        if not ctx.strip(): return
+        mem = memory.memory_text(cid, uid)
+        prompt = f"это чат, ты {AI_NAME}.\nсообщения:\n{ctx}\n"
+        if mem: prompt += f"\n{mem}\n"
+        prompt += "\nответь на последнее сообщение. если нечего - 'решение: нет'."
+        ans = await ask_ai(prompt)
+        if not ans: return
+        num_ai, messages = parse_decision(ans)
+        if not messages: return
+        if num_f is not None: num = num_f
+        elif num_ai and num_ai in st.num_to_msg and not st.num_to_bot.get(num_ai):
+            num = num_ai
+        else: return
+        tmid = st.num_to_msg.get(num)
+        if not tmid or memory.was_replied(tmid): return
+        for i, text in enumerate(messages):
+            if any(w in text.lower() for w in BAD_WORDS): continue
+            sent = await client.send_message(cid, text, reply_to=tmid if i == 0 else None)
+            memory.add_bot_msg(cid, sent.id, text)
+            log.info(f"[{cid}] отправил: {text[:60]}")
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+        st.last_bot_reply_time = time.time()
+        memory.mark_replied(tmid)
+        memory.save()
+    finally:
+        st.force_reply_to = None
+        st.in_progress = False
+
+
+# ==================== МЕНЮ БОТА ====================
 def main_menu():
     kb = [
-        [KeyboardButton(text="📡 Монитор ГЧ"), KeyboardButton(text="📊 Статус")],
-        [KeyboardButton(text="🔊 MP3 в войс"), KeyboardButton(text="⏱ МП3 на N сек")],
-        [KeyboardButton(text="🎬 Медиа в войс"), KeyboardButton(text="🎬 Медиа на N сек")],
-        [KeyboardButton(text="🎙 Войти в войс"), KeyboardButton(text="🚪 Выйти из войса")],
-        [KeyboardButton(text="🎙 Войти на N сек"), KeyboardButton(text="🔄 Перезагрузить")],
+        [KeyboardButton(text="📋 Сессии"), KeyboardButton(text="📊 Статус")],
         [KeyboardButton(text="🚪 Войти в чат"), KeyboardButton(text="📢 Войти в канал")],
-        [KeyboardButton(text="📋 Сессии"), KeyboardButton(text="📜 Логи")],
+        [KeyboardButton(text="🚪 Выйти из чата"), KeyboardButton(text="🎙 Войти в войс")],
+        [KeyboardButton(text="🎙 Войти на N сек"), KeyboardButton(text="🚪 Выйти из войса")],
+        [KeyboardButton(text="🔊 MP3 в войс"), KeyboardButton(text="⏱ МП3 на N сек")],
         [KeyboardButton(text="💬 Написать"), KeyboardButton(text="✉️ ЛС юзеру")],
         [KeyboardButton(text="🖼 Аватар"), KeyboardButton(text="✏️ Имя")],
         [KeyboardButton(text="🎭 Реакция"), KeyboardButton(text="👥 Участники")],
-        [KeyboardButton(text="🚪 Выйти из чата"), KeyboardButton(text="🔄 Перезагрузить")],
+        [KeyboardButton(text="⚙️ Модели"), KeyboardButton(text="🔇 ИИ вкл/выкл")],
+        [KeyboardButton(text="🔄 Перезагрузить"), KeyboardButton(text="📜 Логи")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -791,7 +1005,18 @@ if dp:
         ADMIN_STATE[m.from_user.id] = {"a": "parts_link"}
         await m.answer("Кинь ссылку/юзернейм чата:")
 
+    @dp.message(F.text == "⚙️ Модели")
+    async def mm(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        lines = [f"{i+1}. {x}" for i, x in enumerate(MODELS)]
+        await m.answer("Модели:\n" + "\n".join(lines) + "\n\nКоманды:\n/add_model <имя>\n/del_model <номер>\n/models_up <номер> (наверх)")
 
+    @dp.message(F.text == "🔇 ИИ вкл/выкл")
+    async def toggle(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        SETTINGS["ai_enabled"] = not SETTINGS.get("ai_enabled", True)
+        save_json(SETTINGS_FILE, SETTINGS)
+        await m.answer(f"ИИ: {'вкл' if SETTINGS['ai_enabled'] else 'выкл'}")
 
     @dp.message(F.text == "🔄 Перезагрузить")
     async def rel(m: at.Message):
@@ -1836,87 +2061,6 @@ async def voice_tts_dm_handler(event):
             await event.reply("➡️ loop выключен")
             return
 
-        # ========== монитор ==========
-        if low == "/mon on":
-            MONITOR["on"] = True
-            await event.reply("✅ монитор вкл (проверка каждые 60с)")
-            return
-        if low == "/mon off":
-            MONITOR["on"] = False
-            # выйти из чата если играем
-            if MONITOR["current"]:
-                try:
-                    e = await resolve_entity(CLIENTS[MARVEL_SESSION], MONITOR["current"])
-                    if e:
-                        py = VOICE_CALLS.get(MARVEL_SESSION)
-                        if py:
-                            await py.leave_call(utils.get_peer_id(e))
-                except Exception:
-                    pass
-                MONITOR["current"] = None
-            await event.reply("❌ монитор выкл")
-            return
-        if low.startswith("/mon add "):
-            parts = text.split(maxsplit=2)
-            if len(parts) < 3:
-                await event.reply("использование: /mon add <1-5> <ссылка>")
-                return
-            try:
-                idx = int(parts[1]) - 1
-                if not 0 <= idx <= 4:
-                    raise ValueError
-            except Exception:
-                await event.reply("номер 1-5")
-                return
-            MONITOR["chats"][idx] = parts[2].strip()
-            await event.reply(f"✓ чат {idx+1} = {parts[2].strip()}")
-            return
-        if low.startswith("/mon clear"):
-            parts = text.split()
-            if len(parts) == 1:
-                MONITOR["chats"] = [None, None, None, None, None]
-                await event.reply("очищены все")
-                return
-            try:
-                idx = int(parts[1]) - 1
-                if 0 <= idx <= 4:
-                    MONITOR["chats"][idx] = None
-                    await event.reply(f"✓ чат {idx+1} очищен")
-            except Exception:
-                pass
-            return
-        if low == "/mon list":
-            lines = []
-            for i, link in enumerate(MONITOR["chats"]):
-                lines.append(f"{i+1}. {link or '-'}")
-            st = "вкл" if MONITOR["on"] else "выкл"
-            media = os.path.basename(MONITOR["media"]) if MONITOR["media"] else "нет"
-            await event.reply(f"монитор: {st}\nмедиа: {media}\n" + "\n".join(lines))
-            return
-        if low == "/mon media":
-            await event.reply("пришли медиа (фото/видео) следующим сообщением")
-            ADMIN_STATE[event.sender_id] = {"a": "mon_set_media"}
-            return
-        if low == "/mon check":
-            await event.reply("проверяю все чаты...")
-            c = CLIENTS.get(MARVEL_SESSION)
-            if not c:
-                await event.reply("нет сессии")
-                return
-            lines = []
-            for i, link in enumerate(MONITOR["chats"]):
-                if not link:
-                    lines.append(f"{i+1}. -")
-                    continue
-                e = await resolve_entity(c, link)
-                if not e:
-                    lines.append(f"{i+1}. {link} — не найден")
-                    continue
-                active = await check_voice_active(c, e)
-                lines.append(f"{i+1}. {link} — {'🟢 активен' if active else '⚪ нет войса'}")
-            await event.reply("\n".join(lines))
-            return
-
         if low in ("/where", "где"):
             if VOICE_TTS.get("chat_link"):
                 await event.reply(f"в войсе: {VOICE_TTS['chat_link']}")
@@ -1926,21 +2070,12 @@ async def voice_tts_dm_handler(event):
 
         if low == "/help":
             await event.reply(
-                "пиши текст — озвучу голосом dreamer (@webgh6e).\n\n"
-                "TTS:\n"
-                "/m <ник> — аккаунт для озвучки\n"
-                "/set <ссылка> — зайти в войс\n"
-                "/voice <имя> — голос Marvel\n"
-                "/stop — выйти\n\n"
-                "МОНИТОР ГЧ (до 5 чатов по приоритету):\n"
-                "/mon on|off — вкл/выкл\n"
-                "/mon add <1-5> <ссылка> — задать чат\n"
-                "/mon list — показать\n"
-                "/mon clear — очистить\n"
-                "/mon media — прислать картинку/видео для показа\n"
-                "/mon check — проверить где сейчас войс\n\n"
-                "loop:\n"
-                "/loop on|off"
+                "пиши текст — озвучу голосом dreamer (@webgh6e) в его войсе.\n\n"
+                "/m <ник> — выбрать другой аккаунт для озвучки\n"
+                "/who — кто сейчас активен\n"
+                "/set <ссылка> — зайти активным в войс\n"
+                "/voice <имя> — сменить голос Marvel\n"
+                "/stop — выйти из войса"
             )
             return
 
@@ -2050,110 +2185,6 @@ async def voice_keeper():
             log.warning(f"voice_keeper: {e}")
 
 
-async def check_voice_active(client, ent):
-    """Есть ли активный голосовой чат в группе/канале."""
-    try:
-        full = await client(GetFullChannelRequest(ent))
-        call = getattr(full.full_chat, "call", None)
-        return call is not None
-    except Exception as e:
-        log.warning(f"check_voice_active: {e}")
-        return False
-
-
-async def monitor_once():
-    """Одна проверка: найти первый активный чат по приоритету, при необходимости перейти и играть медиа."""
-    if not MONITOR["on"]:
-        return
-    if not MONITOR["media"]:
-        return
-    if not any(MONITOR["chats"]):
-        return
-
-    c = CLIENTS.get(MARVEL_SESSION)
-    if not c:
-        return
-
-    # найти первый активный чат
-    target = None
-    for link in MONITOR["chats"]:
-        if not link:
-            continue
-        e = await resolve_entity(c, link)
-        if not e:
-            continue
-        if await check_voice_active(c, e):
-            target = link
-            break
-
-    if not target:
-        log.info("monitor: ни один ГЧ не активен")
-        # если мы были в чате и он перестал быть активным — выйти
-        if MONITOR["current"]:
-            old_e = await resolve_entity(c, MONITOR["current"])
-            if old_e:
-                try:
-                    py = VOICE_CALLS.get(MARVEL_SESSION)
-                    if py:
-                        await py.leave_call(utils.get_peer_id(old_e))
-                except Exception:
-                    pass
-            MONITOR["current"] = None
-        return
-
-    if MONITOR["current"] == target:
-        return  # уже там
-
-    # переключение
-    log.info(f"monitor: переключаюсь на {target}")
-    if MONITOR["current"]:
-        old_e = await resolve_entity(c, MONITOR["current"])
-        if old_e:
-            try:
-                py = VOICE_CALLS.get(MARVEL_SESSION)
-                if py:
-                    await py.leave_call(utils.get_peer_id(old_e))
-            except Exception:
-                pass
-
-    e = await resolve_entity(c, target)
-    if not e:
-        return
-    try:
-        await c(JoinChannelRequest(e))
-    except Exception:
-        pass
-    try:
-        py = VOICE_CALLS.get(MARVEL_SESSION)
-        if not py:
-            py = PyTgCalls(c)
-            await py.start()
-            VOICE_CALLS[MARVEL_SESSION] = py
-
-        media = MONITOR["media"]
-        # конвертим если картинка/видео
-        kind = media_kind(media)
-        if kind in ("image", "video", "gif"):
-            conv = await convert_media(media)
-            if conv:
-                media = conv
-        await py.play(utils.get_peer_id(e), MediaStream(media))
-        MONITOR["current"] = target
-        log.info(f"monitor: играю {media}")
-    except Exception as ex:
-        log.warning(f"monitor play: {ex}")
-
-
-async def monitor_loop():
-    """Каждые 60 сек проверяет ГЧ."""
-    while True:
-        try:
-            await asyncio.sleep(60)
-            await monitor_once()
-        except Exception as e:
-            log.warning(f"monitor_loop: {e}")
-
-
 async def main():
     log.info(f"админ: {ADMIN_ID}, ИИ сессия: {AI_SESSION_ID}")
     await load_env_sessions()
@@ -2180,12 +2211,7 @@ async def main():
     asyncio.create_task(voice_keeper())
     log.info("voice_keeper запущен")
 
-    # монитор ГЧ (запускается всегда, но работает если MONITOR["on"])
-    asyncio.create_task(monitor_loop())
-    log.info("monitor_loop запущен")
-
-    # AI отключён
-    # # AI выключен
+    asyncio.create_task(ai_poller())
 
     if bot:
         log.info("управляющий бот стартует")
