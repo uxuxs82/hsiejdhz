@@ -621,6 +621,36 @@ if dp:
         if m.from_user.id != ADMIN_ID: return
         await m.answer(f"Панель. Сессий онлайн: {len(CLIENTS)}", reply_markup=main_menu())
 
+    @dp.message(F.text == "📡 Монитор ГЧ")
+    async def monitor_menu(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        chats = MONITOR["chats"]
+        lines = []
+        for i, link in enumerate(chats):
+            mark = "▶" if MONITOR["current"] == link else " "
+            lines.append(f"{mark} {i+1}. {link or '—'}")
+        st = "🟢 вкл" if MONITOR["on"] else "⚪ выкл"
+        media = os.path.basename(MONITOR["media"]) if MONITOR["media"] else "нет"
+        text = (f"📡 МОНИТОР ГЧ\n\n"
+                f"Статус: {st}\n"
+                f"Медиа: {media}\n"
+                f"Сейчас играю: {MONITOR['current'] or 'нигде'}\n\n"
+                + "\n".join(lines))
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🟢 ВКЛ", callback_data="mon_on"),
+             InlineKeyboardButton(text="⚪ ВЫКЛ", callback_data="mon_off")],
+            [InlineKeyboardButton(text="🎬 Прислать медиа", callback_data="mon_media"),
+             InlineKeyboardButton(text="🔄 Проверить", callback_data="mon_check")],
+            [InlineKeyboardButton(text="1️⃣", callback_data="mon_add_0"),
+             InlineKeyboardButton(text="2️⃣", callback_data="mon_add_1"),
+             InlineKeyboardButton(text="3️⃣", callback_data="mon_add_2"),
+             InlineKeyboardButton(text="4️⃣", callback_data="mon_add_3"),
+             InlineKeyboardButton(text="5️⃣", callback_data="mon_add_4")],
+            [InlineKeyboardButton(text="🗑 Очистить всё", callback_data="mon_clearall"),
+             InlineKeyboardButton(text="🔁 Обновить", callback_data="mon_refresh")],
+        ])
+        await m.answer(text, reply_markup=kb)
+
     @dp.message(F.text == "📋 Сессии")
     async def sess_list(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
@@ -990,6 +1020,29 @@ if dp:
         sz = os.path.getsize(path)
         if sz < 500:
             await m.answer(f"файл слишком маленький: {sz} байт"); return
+        if st.get("a") == "mon_set_media":
+            file_obj = m.document or m.audio or (m.photo[-1] if m.photo else None) or m.video or m.animation
+            if not file_obj:
+                await m.answer("не понял что пришло"); return
+            fname = "mon_media.bin"
+            if hasattr(file_obj, "file_name") and file_obj.file_name:
+                fname = file_obj.file_name
+            elif m.photo:
+                fname = "mon_media.jpg"
+            elif m.video:
+                fname = "mon_media.mp4"
+            safe = re.sub(r"[^A-Za-z0-9._\-]", "_", fname)
+            path = os.path.join(MEDIA_DIR, "monitor_" + str(int(time.time())) + "_" + safe)
+            try:
+                await bot.download(file_obj, destination=path)
+            except Exception as e:
+                await m.answer(f"не смог скачать: {e}"); return
+            MONITOR["media"] = path
+            sz = os.path.getsize(path)
+            ADMIN_STATE.pop(m.from_user.id, None)
+            await m.answer(f"✓ медиа для монитора ({sz // 1024}K). /mon on вкл, /mon off выкл")
+            return
+
         if st.get("a") == "mp3_upload":
             st["mp3"] = path
             st["a"] = "voice_link_mp3"
@@ -1006,6 +1059,70 @@ if dp:
     @dp.callback_query()
     async def cb(cbq: at.CallbackQuery):
         if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+
+        # ========== МОНИТОР ==========
+        d = cbq.data
+        if d == "mon_on":
+            MONITOR["on"] = True
+            await cbq.answer("вкл")
+            await cbq.message.answer("🟢 монитор вкл, проверка каждые 60с")
+            return
+        if d == "mon_off":
+            MONITOR["on"] = False
+            if MONITOR["current"]:
+                try:
+                    c = CLIENTS.get(MARVEL_SESSION)
+                    e = await resolve_entity(c, MONITOR["current"]) if c else None
+                    if e:
+                        py = VOICE_CALLS.get(MARVEL_SESSION)
+                        if py:
+                            await py.leave_call(utils.get_peer_id(e))
+                except Exception:
+                    pass
+                MONITOR["current"] = None
+            await cbq.answer("выкл")
+            await cbq.message.answer("⚪ монитор выкл")
+            return
+        if d == "mon_media":
+            ADMIN_STATE[cbq.from_user.id] = {"a": "mon_set_media"}
+            await cbq.answer()
+            await cbq.message.answer("пришли фото или видео для показа")
+            return
+        if d == "mon_check":
+            c = CLIENTS.get(MARVEL_SESSION)
+            if not c:
+                await cbq.answer("нет сессии", show_alert=True)
+                return
+            await cbq.answer("проверяю...")
+            lines = []
+            for i, link in enumerate(MONITOR["chats"]):
+                if not link:
+                    lines.append(f"{i+1}. —")
+                    continue
+                e = await resolve_entity(c, link)
+                if not e:
+                    lines.append(f"{i+1}. не найден")
+                    continue
+                active = await check_voice_active(c, e)
+                lines.append(f"{i+1}. {'🟢 активен' if active else '⚪ нет войса'}")
+            await cbq.message.answer("проверка:\n" + "\n".join(lines))
+            return
+        if d == "mon_clearall":
+            MONITOR["chats"] = [None, None, None, None, None]
+            await cbq.answer("очищено")
+            await cbq.message.answer("🗑 все чаты очищены")
+            return
+        if d == "mon_refresh":
+            await cbq.answer("жми 📡 Монитор ГЧ снова")
+            return
+        if d.startswith("mon_add_"):
+            idx = int(d.split("_")[2])
+            ADMIN_STATE[cbq.from_user.id] = {"a": "mon_add_link", "idx": idx}
+            await cbq.answer()
+            await cbq.message.answer(f"пришли ссылку для чата №{idx+1}:")
+            return
+        # ============================
+
 
         # === обработка кнопок медиа ===
         if cbq.data.startswith("mpick_play:") or cbq.data.startswith("mpick_timed:"):
@@ -1116,6 +1233,15 @@ if dp:
         st = ADMIN_STATE.get(m.from_user.id)
         if not st: return
         a = st.get("a")
+
+        # ==== монитор ====
+        if a == "mon_add_link":
+            idx = st.get("idx", 0)
+            link = m.text.strip()
+            MONITOR["chats"][idx] = link
+            ADMIN_STATE.pop(m.from_user.id, None)
+            await m.answer(f"✓ чат №{idx+1} = {link}")
+            return
 
         if a in ("join_chat", "join_channel"):
             st["link"] = m.text.strip()
