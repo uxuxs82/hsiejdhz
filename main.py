@@ -272,6 +272,7 @@ LOOP_STATE = {"on": True}
 
 # монитор голосовых чатов (до 5, по приоритету)
 MONITOR = {
+    "user_stopped": False,  # пользователь вручную вышел — keeper не заходит
     "chats": [None, None, None, None, None],   # ссылки
     "media": None,       # путь к картинке/видео
     "on": False,
@@ -1965,6 +1966,7 @@ async def voice_tts_dm_handler(event):
         # ========== монитор ==========
         if low == "/mon on":
             MONITOR["on"] = True
+            MONITOR["user_stopped"] = False
             await event.reply("✅ монитор вкл (проверка каждые 60с)")
             return
         if low == "/mon off":
@@ -2155,6 +2157,8 @@ async def voice_keeper():
 
             # если его нет в VOICE_CALLS или протухло — перезайти
             if vid not in VOICE_CALLS:
+                if MONITOR.get("user_stopped"):
+                    continue  # пользователь сам вышел, не лезем
                 ok = await auto_join_voice()
                 if ok:
                     last_refresh = time.time()
