@@ -263,8 +263,34 @@ except Exception:
 MARVEL_BOT_USERNAME = "MarvelVoiceBot"
 # ==== МАФИЯ ====
 MAFIA_BOT = "TrueMafiaBot"
-MAFIA_GROUP = os.environ.get("MAFIA_GROUP", "")
+MAFIA_GROUP = os.environ.get("MAFIA_GROUP", "")   # можно переопределить в боте
 ADMIN_NAME_IN_GAME = os.environ.get("ADMIN_NAME", "")
+
+MAFIA_CFG_FILE = os.path.join(DATA_DIR, "mafia_cfg.json")
+MAFIA_CFG = {"group": MAFIA_GROUP, "admin_name": ADMIN_NAME_IN_GAME}
+
+try:
+    if os.path.exists(MAFIA_CFG_FILE):
+        with open(MAFIA_CFG_FILE, "r", encoding="utf-8") as _f:
+            MAFIA_CFG.update(json.load(_f))
+except Exception as _e:
+    print(f"mafia cfg load: {_e}")
+
+
+def mafia_save_cfg():
+    try:
+        with open(MAFIA_CFG_FILE, "w", encoding="utf-8") as _f:
+            json.dump(MAFIA_CFG, _f, ensure_ascii=False)
+    except Exception as _e:
+        log.warning(f"mafia save cfg: {_e}")
+
+
+def mafia_get_group():
+    return MAFIA_CFG.get("group") or MAFIA_GROUP
+
+
+def mafia_get_admin_name():
+    return MAFIA_CFG.get("admin_name") or ADMIN_NAME_IN_GAME
 MAFIA_STATE = {}  # sid -> dict(role, alive, target_cmd, game_active)
 MAFIA_RULES = {
     "Мафия":     {"never_kill_admin": True},
@@ -669,23 +695,86 @@ if dp:
     @dp.message(F.text == "🎭 Мафия")
     async def mafia_menu(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
+        g = mafia_get_group() or "не задана"
+        n = mafia_get_admin_name() or "не задано"
         await m.answer(
-            "Мафия TrueMafiaBot:\n"
-            "/mafia_join — все в группу и старт\n"
-            "/mafia_join <sid> — один\n"
-            "/mafia_status — роли\n"
-            "/mafia_roles — сброс\n"
-            "\nВ группе пиши: убей X / голосуй X / проверь X / лечи X"
+            f"🎭 Мафия TrueMafiaBot\n\n"
+            f"Группа: {g}\n"
+            f"Твоё имя: {n}\n\n"
+            "КОМАНДЫ:\n"
+            "/mafia_group <ссылка> — задать группу\n"
+            "  @username / t.me/+invite / -100xxx / https://t.me/+xxx\n"
+            "/mafia_name <имя> — твоё имя в игре\n"
+            "/mafia_show — показать настройки\n"
+            "/mafia_join — завести всех и начать игру\n"
+            "/mafia_status — кто с какой ролью\n"
+            "/mafia_roles — сброс ролей\n\n"
+            "В ГРУППЕ ПИШИ:\n"
+            "убей Вася / голосуй Петя / проверь Маша / лечи Коля"
         )
 
     @dp.message(Command("mafia_join"))
     async def _mjoin(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
-        parts = m.text.split()
-        sid = parts[1] if len(parts) > 1 else None
-        await m.answer(f"запускаю мафию (sid={sid or 'все'})...")
-        await mafia_join_group(sid)
-        await m.answer("готово")
+        parts = m.text.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else None
+        # если аргумент похож на ссылку/юзернейм — используем как группу
+        if arg and (arg.startswith("@") or "t.me/" in arg or arg.startswith("-100") or arg.startswith("+") or arg.startswith("https")):
+            MAFIA_CFG["group"] = arg
+            mafia_save_cfg()
+            await m.answer(f"группа задана: {arg}\nзапускаю заход...")
+            await mafia_join_group(None, arg)
+            await m.answer("готово")
+        else:
+            sid = arg
+            await m.answer(f"запускаю мафию (sid={sid or 'все'})...")
+            await mafia_join_group(sid)
+            await m.answer("готово")
+
+    @dp.message(Command("mafia_group"))
+    async def _mgroup(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        parts = m.text.split(maxsplit=1)
+        if len(parts) < 2:
+            cur = mafia_get_group() or "не задана"
+            await m.answer(f"текущая группа: {cur}\n\nПрименение:\n/mafia_group @username\n/mafia_group https://t.me/+invitehash\n/mafia_group -1001234567890")
+            return
+        link = parts[1].strip()
+        MAFIA_CFG["group"] = link
+        mafia_save_cfg()
+        await m.answer(f"✓ группа сохранена: {link}")
+
+    @dp.message(Command("mafia_name"))
+    async def _mname(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        parts = m.text.split(maxsplit=1)
+        if len(parts) < 2:
+            cur = mafia_get_admin_name() or "не задано"
+            await m.answer(f"твоё игровое имя: {cur}\n\nПрименение:\n/mafia_name ыхыхх.k.vu")
+            return
+        name = parts[1].strip()
+        MAFIA_CFG["admin_name"] = name
+        mafia_save_cfg()
+        await m.answer(f"✓ имя сохранено: {name}\nТеперь боты не будут тебя убивать/голосовать против.")
+
+    @dp.message(Command("mafia_show"))
+    async def _mshow(m: at.Message):
+        if m.from_user.id != ADMIN_ID: return
+        g = mafia_get_group() or "не задана"
+        n = mafia_get_admin_name() or "не задано"
+        cnt = len(CLIENTS)
+        await m.answer(
+            f"Настройки мафии:\n"
+            f"Группа: {g}\n"
+            f"Имя админа: {n}\n"
+            f"Сессий онлайн: {cnt}\n\n"
+            f"Команды:\n"
+            f"/mafia_group <ссылка> — задать группу\n"
+            f"/mafia_name <имя> — твоё имя в игре\n"
+            f"/mafia_join — завести всех и начать\n"
+            f"/mafia_status — роли\n"
+            f"/mafia_roles — сброс"
+        )
 
     @dp.message(Command("mafia_status"))
     async def _mst(m: at.Message):
@@ -2557,23 +2646,69 @@ async def mafia_group_handler(event):
         log.warning(f"mafia_group: {e}")
 
 
-async def mafia_join_group(sid=None):
+async def mafia_resolve_group(client, link):
+    """Резолвит группу: @username, t.me/+invite, t.me/joinchat/xxx, ID."""
+    if not link:
+        return None
+    link = link.strip()
+    # инвайт-ссылка
+    m = re.search(r"(?:t\.me/\+|joinchat/)([A-Za-z0-9_\-]+)", link)
+    if m:
+        hash_part = m.group(1)
+        try:
+            from telethon.tl.functions.messages import ImportChatInviteRequest
+            upd = await client(ImportChatInviteRequest(hash_part))
+            chats = getattr(upd, "chats", [])
+            if chats:
+                return chats[0]
+        except Exception as e:
+            if "already" in str(e).lower():
+                # уже там — просто резолвим через check
+                try:
+                    from telethon.tl.functions.messages import CheckChatInviteRequest
+                    info = await client(CheckChatInviteRequest(hash_part))
+                    if getattr(info, "chat", None):
+                        return info.chat
+                except Exception:
+                    pass
+        return None
+    # @username или t.me/username
+    uname = link
+    mm = re.match(r"(?:https?://)?t\.me/([A-Za-z0-9_]+)", link)
+    if mm:
+        uname = mm.group(1)
+    if uname.startswith("@"):
+        uname = uname[1:]
+    try:
+        return await client.get_entity(uname)
+    except Exception:
+        return None
+
+
+async def mafia_join_group(sid=None, group_link=None):
     """Заводит ботов в группу и нажимает присоединиться."""
-    if not MAFIA_GROUP:
-        log.warning("MAFIA_GROUP не задан")
+    link = group_link or mafia_get_group()
+    if not link:
+        log.warning("группа не задана")
         return
     targets = [sid] if sid else list(CLIENTS.keys())
     first = True
+    ok_count = 0
     for s in targets:
         c = CLIENTS.get(s)
         if not c:
             continue
         try:
-            group = await c.get_entity(MAFIA_GROUP)
+            group = await mafia_resolve_group(c, link)
+            if not group:
+                log.warning(f"[МАФИЯ {s}] не смог резолвить {link}")
+                await asyncio.sleep(1.5)
+                continue
             try:
                 await c(JoinChannelRequest(group))
-            except Exception:
-                pass
+            except Exception as e:
+                if "already" not in str(e).lower():
+                    log.warning(f"[МАФИЯ {s}] join: {e}")
             if first:
                 await c.send_message(group, "/game")
                 first = False
@@ -2591,9 +2726,11 @@ async def mafia_join_group(sid=None):
                     if clicked:
                         break
             log.info(f"[МАФИЯ {s}] {'присоединился' if clicked else 'кнопка не найдена'}")
+            ok_count += 1
         except Exception as e:
             log.warning(f"mafia_join {s}: {e}")
         await asyncio.sleep(random.uniform(1.5, 3.0))
+    log.info(f"мафия: зашло {ok_count}/{len(targets)} сессий в {link}")
 
 
 async def main():
