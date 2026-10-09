@@ -261,28 +261,6 @@ except Exception:
     TTS_DIR = DATA_DIR
 
 MARVEL_BOT_USERNAME = "MarvelVoiceBot"
-# ==== МАФИЯ ====
-MAFIA_BOT = "TrueMafiaBot"
-MAFIA_GROUP = os.environ.get("MAFIA_GROUP", "")
-ADMIN_NAME_IN_GAME = os.environ.get("ADMIN_NAME", "")
-MAFIA_STATE = {}  # sid -> dict(role, alive, target_cmd, game_active)
-MAFIA_RULES = {
-    "Мафия":     {"never_kill_admin": True},
-    "Дон":       {"never_kill_admin": True},
-    "Маньяк":    {"never_kill_admin": True},
-    "Комиссар":  {"never_check_admin": True},
-    "Сержант":   {"never_check_admin": True},
-    "Доктор":    {"always_heal_admin": True},
-    "Любовница": {"never_distract_admin": True},
-    "Адвокат":   {"always_defend_admin": True},
-    "Камикадзе": {"never_take_admin": True},
-}
-MAFIA_ROLE_WORDS = [
-    "Мафия","Дон","Комиссар","Сержант","Доктор","Маньяк",
-    "Любовница","Адвокат","Самоубийца","Бомж","Счастливчик",
-    "Камикадзе","Мирный житель","Мирный","Журналист",
-]
-
 MARVEL_SESSION = "5862417157"        # dreamer (@webgh6e)
 DEFAULT_VOICE_CHAT = "https://t.me/chatikxxzs?videochat"
 MARVEL_TIMEOUT = 20
@@ -416,27 +394,6 @@ async def load_env_sessions():
         except Exception as e:
             log.warning(f"{sid}: {e}")
     log.info(f"онлайн: {len(CLIENTS)}")
-
-    # мафия: навесить handlers
-    from telethon import events as _ev_maf
-    _mg = None
-    if MAFIA_GROUP:
-        try:
-            for _c in CLIENTS.values():
-                _mg = await _c.get_entity(MAFIA_GROUP)
-                break
-        except Exception as _e:
-            log.warning(f"mafia group resolve: {_e}")
-    _count = 0
-    for _sid, _c in CLIENTS.items():
-        try:
-            _c.add_event_handler(mafia_dm_handler, _ev_maf.NewMessage(from_users=MAFIA_BOT))
-            if _mg:
-                _c.add_event_handler(mafia_group_handler, _ev_maf.NewMessage(chats=_mg))
-            _count += 1
-        except Exception as _e:
-            log.warning(f"mafia handler {_sid}: {_e}")
-    log.info(f"мафия: handlers навешены на {_count} сессий")
 
 
 def list_sids():
@@ -636,7 +593,6 @@ def main_menu():
         [KeyboardButton(text="🎙 Войти в войс"), KeyboardButton(text="🚪 Выйти из войса")],
         [KeyboardButton(text="🎙 Войти на N сек"), KeyboardButton(text="🔄 Перезагрузить")],
         [KeyboardButton(text="🚪 Войти в чат"), KeyboardButton(text="📢 Войти в канал")],
-        [KeyboardButton(text="🎭 Мафия"), KeyboardButton(text="📜 Логи")],
         [KeyboardButton(text="📋 Сессии"), KeyboardButton(text="📜 Логи")],
         [KeyboardButton(text="💬 Написать"), KeyboardButton(text="✉️ ЛС юзеру")],
         [KeyboardButton(text="🖼 Аватар"), KeyboardButton(text="✏️ Имя")],
@@ -665,46 +621,6 @@ if dp:
     async def cmd_start(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
         await m.answer(f"Панель. Сессий онлайн: {len(CLIENTS)}", reply_markup=main_menu())
-
-    @dp.message(F.text == "🎭 Мафия")
-    async def mafia_menu(m: at.Message):
-        if m.from_user.id != ADMIN_ID: return
-        await m.answer(
-            "Мафия TrueMafiaBot:\n"
-            "/mafia_join — все в группу и старт\n"
-            "/mafia_join <sid> — один\n"
-            "/mafia_status — роли\n"
-            "/mafia_roles — сброс\n"
-            "\nВ группе пиши: убей X / голосуй X / проверь X / лечи X"
-        )
-
-    @dp.message(Command("mafia_join"))
-    async def _mjoin(m: at.Message):
-        if m.from_user.id != ADMIN_ID: return
-        parts = m.text.split()
-        sid = parts[1] if len(parts) > 1 else None
-        await m.answer(f"запускаю мафию (sid={sid or 'все'})...")
-        await mafia_join_group(sid)
-        await m.answer("готово")
-
-    @dp.message(Command("mafia_status"))
-    async def _mst(m: at.Message):
-        if m.from_user.id != ADMIN_ID: return
-        lines = []
-        for sid in CLIENTS:
-            st = MAFIA_STATE.get(sid, {})
-            r = st.get("role") or "?"
-            a = "жив" if st.get("alive", True) else "мёртв"
-            nm = CLIENT_META.get(sid, {}).get("name", sid)
-            lines.append(f"{nm} ({sid}): {r} [{a}]")
-        await m.answer("\n".join(lines) or "никто не онлайн")
-
-    @dp.message(Command("mafia_roles"))
-    async def _mr(m: at.Message):
-        if m.from_user.id != ADMIN_ID: return
-        for sid in MAFIA_STATE:
-            MAFIA_STATE[sid].update(role=None, alive=True, target_cmd=None, game_active=False)
-        await m.answer("роли сброшены")
 
     @dp.message(F.text == "📡 Монитор ГЧ")
     async def monitor_menu(m: at.Message):
@@ -2366,234 +2282,6 @@ async def monitor_loop():
             await monitor_once()
         except Exception as e:
             log.warning(f"monitor_loop: {e}")
-
-
-# ================== МАФИЯ ==================
-def mafia_state(sid):
-    if sid not in MAFIA_STATE:
-        MAFIA_STATE[sid] = {
-            "role": None, "alive": True, "target_cmd": None, "game_active": False,
-        }
-    return MAFIA_STATE[sid]
-
-
-def mafia_parse_role(text):
-    m = re.search(r"Ты\s*-\s*[^\w]*\s*([А-Яа-яЁёA-Za-z]+(?:\s+[А-Яа-яЁёA-Za-z]+)?)", text)
-    if m:
-        role = m.group(1).strip()
-        for r in MAFIA_ROLE_WORDS:
-            if r.lower() in role.lower():
-                return r
-        return role
-    low = text.lower()
-    for r in MAFIA_ROLE_WORDS:
-        if r.lower() in low:
-            return r
-    return None
-
-
-def mafia_is_night(text):
-    low = text.lower()
-    return any(k in low for k in [
-        "кого ты хочешь линчевать", "с кем будем спать", "кого будем лечить",
-        "выбери игрока", "кого убить", "кого проверить", "к кому пойти",
-        "твой ход", "выбери жертву",
-    ])
-
-
-def mafia_is_vote(text):
-    low = text.lower()
-    return any(k in low for k in [
-        "пришло время определить", "наказать виноватых",
-        "голосование продлится", "голосуй", "кого казнить",
-    ])
-
-
-def mafia_is_confirm(text):
-    low = text.lower()
-    return any(k in low for k in [
-        "вы точно хотите линчевать", "подтверди", "подтвердите", "точно ли",
-    ])
-
-
-def mafia_pick_button(buttons, sid, kind):
-    st = mafia_state(sid)
-    role = st["role"] or ""
-    rules = MAFIA_RULES.get(role, {})
-    admin_id = str(ADMIN_ID)
-    admin_name_low = ADMIN_NAME_IN_GAME.lower() if ADMIN_NAME_IN_GAME else None
-    flat = [b for row in buttons for b in row]
-
-    cmd = st.get("target_cmd")
-    if cmd and kind in ("night", "vote"):
-        c = cmd.lower()
-        for b in flat:
-            if c in (b.text or "").lower():
-                return b
-
-    if kind == "night":
-        if rules.get("never_kill_admin") or rules.get("never_check_admin") \
-           or rules.get("never_distract_admin"):
-            for b in flat:
-                txt = (b.text or "")
-                if admin_id not in txt and (not admin_name_low or admin_name_low not in txt.lower()):
-                    return b
-        if rules.get("always_heal_admin") or rules.get("always_defend_admin"):
-            for b in flat:
-                txt = (b.text or "")
-                if admin_id in txt or (admin_name_low and admin_name_low in txt.lower()):
-                    return b
-            return flat[0] if flat else None
-
-    if kind == "vote":
-        if rules.get("never_kill_admin"):
-            for b in flat:
-                txt = (b.text or "")
-                if admin_id not in txt and (not admin_name_low or admin_name_low not in txt.lower()):
-                    return b
-
-    if kind == "confirm":
-        for b in flat:
-            t = (b.text or "").lower()
-            if any(x in t for x in ["да", "подтверд", "yes", "ok", "✅", "за"]):
-                return b
-        return flat[0] if flat else None
-
-    return flat[0] if flat else None
-
-
-async def mafia_click(client, msg, btn):
-    try:
-        if hasattr(btn, "data") and btn.data:
-            await client(GetBotCallbackAnswerRequest(
-                peer=msg.peer_id, msg_id=msg.id, data=btn.data))
-            return True
-        await msg.click(text=btn.text)
-        return True
-    except Exception as e:
-        log.warning(f"mafia click: {e}")
-        return False
-
-
-async def mafia_dm_handler(event):
-    """Обработка ЛС от @TrueMafiaBot."""
-    try:
-        me = await event.client.get_me()
-        sid = None
-        for s, meta in CLIENT_META.items():
-            if meta.get("id") == me.id:
-                sid = s; break
-        if not sid:
-            return
-        st = mafia_state(sid)
-        msg = event.message
-        text = msg.text or ""
-        buttons = msg.buttons or []
-
-        log.info(f"[МАФИЯ {sid}] ЛС: {text[:130]!r}")
-        for row in buttons:
-            log.info(f"  [{sid}] btn: {[b.text for b in row]}")
-
-        r = mafia_parse_role(text)
-        if r:
-            st["role"] = r
-            st["game_active"] = True
-            st["alive"] = True
-            log.info(f"[{sid}] РОЛЬ = {r}")
-
-        low = text.lower()
-        if any(k in low for k in ["тебя убили", "тебя линчевали", "ты мёртв", "вы мертвы", "погиб"]):
-            st["alive"] = False
-            log.info(f"[{sid}] МЁРТВ")
-
-        if mafia_is_night(text) and buttons:
-            btn = mafia_pick_button(buttons, sid, "night")
-            if btn:
-                ok = await mafia_click(event.client, msg, btn)
-                log.info(f"[{sid}] night -> {btn.text} ok={ok}")
-                st["target_cmd"] = None
-            return
-
-        if mafia_is_vote(text) and buttons:
-            btn = mafia_pick_button(buttons, sid, "vote")
-            if btn:
-                ok = await mafia_click(event.client, msg, btn)
-                log.info(f"[{sid}] vote -> {btn.text} ok={ok}")
-                st["target_cmd"] = None
-            return
-
-        if mafia_is_confirm(text) and buttons:
-            btn = mafia_pick_button(buttons, sid, "confirm")
-            if btn:
-                ok = await mafia_click(event.client, msg, btn)
-                log.info(f"[{sid}] confirm -> {btn.text} ok={ok}")
-            return
-    except Exception as e:
-        log.warning(f"mafia_dm: {e}")
-
-
-async def mafia_group_handler(event):
-    """Твои команды в группе — рассылаем всем ботам."""
-    try:
-        sender = await event.get_sender()
-        if not sender or getattr(sender, "id", 0) != ADMIN_ID:
-            return
-        text = (event.message.text or "").strip()
-        if not text:
-            return
-        low = text.lower()
-        m = re.match(
-            r"^(убей|kill|голосуй|vote|проверь|check|лечи|heal|отвлеки|защити|"
-            r"кик|выгони|казни|линчуй|исключи|забань|кикайте|голосуем|убиваем|"
-            r"проверяем|лечим|казним|выгоняем|линчуем)\s+(.+)$",
-            low,
-        )
-        if m:
-            target = m.group(2).strip()
-            for sid in MAFIA_STATE:
-                MAFIA_STATE[sid]["target_cmd"] = target
-            log.info(f"МАФИЯ КОМАНДА: {m.group(1)} -> {target}")
-    except Exception as e:
-        log.warning(f"mafia_group: {e}")
-
-
-async def mafia_join_group(sid=None):
-    """Заводит ботов в группу и нажимает присоединиться."""
-    if not MAFIA_GROUP:
-        log.warning("MAFIA_GROUP не задан")
-        return
-    targets = [sid] if sid else list(CLIENTS.keys())
-    first = True
-    for s in targets:
-        c = CLIENTS.get(s)
-        if not c:
-            continue
-        try:
-            group = await c.get_entity(MAFIA_GROUP)
-            try:
-                await c(JoinChannelRequest(group))
-            except Exception:
-                pass
-            if first:
-                await c.send_message(group, "/game")
-                first = False
-                await asyncio.sleep(3)
-            clicked = False
-            async for m in c.iter_messages(group, limit=10):
-                if m.buttons:
-                    for row in m.buttons:
-                        for b in row:
-                            t = (b.text or "").lower()
-                            if any(x in t for x in ["присоед", "join", "участв"]):
-                                await m.click(text=b.text)
-                                clicked = True
-                                break
-                    if clicked:
-                        break
-            log.info(f"[МАФИЯ {s}] {'присоединился' if clicked else 'кнопка не найдена'}")
-        except Exception as e:
-            log.warning(f"mafia_join {s}: {e}")
-        await asyncio.sleep(random.uniform(1.5, 3.0))
 
 
 async def main():
