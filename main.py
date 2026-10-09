@@ -303,6 +303,61 @@ MAFIA_RULES = {
     "Адвокат":   {"always_defend_admin": True},
     "Камикадзе": {"never_take_admin": True},
 }
+# ====== СЛОВАРИ СИНОНИМОВ КНОПОК (50+ на каждую категорию) ======
+JOIN_BUTTON_WORDS = [
+    "присоедин", "участв", "войти", "вход", "играть", "join", "вступить",
+    "вступи", "в игру", "зайти", "заход", "принять", "прими", "подключ",
+    "готов", "я в деле", "я в игре", "согласен играть", "хочу играть",
+    "регистрац", "записаться", "запиши", "отметиться", "отметь",
+    "включить", "добавить меня", "возьмите", "хочу в", "хочу к",
+    "участвую", "участие", "играю", "стартанем", "погнали", "я с вами",
+    "я тут", "тут", "здесь", "present", "in", "yes join", "play",
+    "начать", "старт", "start", "вперед", "поехали", "погнали", "let's go",
+    "примите", "прими меня", "включите", "включи меня", "подключите",
+    "подключи меня", "вступить в игру", "вступи в игру", "войти в игру",
+    "войти в чат", "подписаться", "подпишись", "место", "займи место",
+    "хочу участвовать", "буду играть", "готов играть", "я готов",
+]
+
+VOTE_BUTTON_WORDS = [
+    "голос", "голосуй", "vote", "линч", "казн", "выгна", "изгна",
+    "кик", "kick", "выкинуть", "выкинь", "убить", "убивай", "уби",
+    "приговор", "суд", "наказать", "накажи", "наказание", "расправ",
+    "исключить", "исключи", "избавиться", "убрать", "убери",
+    "изолировать", "посадить", "посади", "арестовать", "арест",
+    "забанить", "бан", "выгнать из игры", "лишить жизни",
+    "подозреваемый", "подозреваю", "виновен", "вина", "виновного",
+    "имена игроков", "кого", "выбери игрока", "choose", "select",
+    "за", "против", "убрать игрока", "исключить игрока",
+    "голосую за", "голосуем за", "решай", "решить", "решаем",
+    "определить", "определи", "судьба", "финал", "конец",
+    "убийство", "жертва", "выбрать", "цель",
+]
+
+CONFIRM_BUTTON_WORDS = [
+    "да", "yes", "ok", "ок", "окей", "подтверд", "confirm", "согласен",
+    "согласна", "за", "точно", "верно", "верно ли", "конечно",
+    "подтверждаю", "утверждаю", "утвердить", "принять", "принимаю",
+    "полностью", "абсолютно", "100%", "100 процентов", "гарантирую",
+    "уверен", "уверена", "правда", "истина", "корректно", "правильно",
+    "все верно", "так и есть", "именно", "именно так", "безусловно",
+    "разумеется", "непременно", "обязательно", "естественно",
+    "✅", "👍", "☑", "☑️", "✔", "✔️", "✓", "🤝", "💯", "👌",
+    "продолжить", "продолжи", "далее", "дальше", "вперед",
+    "go", "continue", "next", "accept", "approve", "agree", "sure",
+    "yep", "yeah", "yup", "afirm", "true", "correct", "right",
+]
+
+DENY_BUTTON_WORDS = [
+    "нет", "no", "не", "не надо", "отмена", "cancel", "отказ",
+    "отказываюсь", "против", "запрет", "запрещаю", "не согласен",
+    "неверно", "ошибка", "ложь", "вранье", "неправильно", "не так",
+    "никак", "ни в коем случае", "никогда", "ни за что", "не хочу",
+    "❌", "👎", "✖", "✖️", "✗", "🚫", "⛔", "🛑",
+    "стоп", "stop", "halt", "pause", "abort", "reject", "decline",
+    "disagree", "false", "wrong", "incorrect", "nope", "nah",
+]
+
 MAFIA_ROLE_WORDS = [
     "Мафия","Дон","Комиссар","Сержант","Доктор","Маньяк",
     "Любовница","Адвокат","Самоубийца","Бомж","Счастливчик",
@@ -2486,7 +2541,11 @@ def mafia_is_night(text):
     return any(k in low for k in [
         "кого ты хочешь линчевать", "с кем будем спать", "кого будем лечить",
         "выбери игрока", "кого убить", "кого проверить", "к кому пойти",
-        "твой ход", "выбери жертву",
+        "твой ход", "выбери жертву", "выбери цель", "кого выберешь",
+        "кого казнить", "кого линчевать", "выбери", "выбор",
+        "нажми на имя", "нажми на игрока", "выбери пользователя",
+        "кого", "выбери кого", "выбирай", "выбор жертвы",
+        "выбор цели", "твой выбор", "твоё решение", "твое решение",
     ])
 
 
@@ -2495,6 +2554,14 @@ def mafia_is_vote(text):
     return any(k in low for k in [
         "пришло время определить", "наказать виноватых",
         "голосование продлится", "голосуй", "кого казнить",
+        "голосование", "голосуйте", "время голосовать",
+        "определить и наказать", "определяем", "голосование началось",
+        "ваш голос", "отдать голос", "проголосовать", "голосование завершено",
+        "лидера голосования", "большинство голосов", "голоса",
+        "подсчёт голосов", "подсчет голосов", "итоги голосования",
+        "результаты голосования", "кого линчевать", "кого выгнать",
+        "наказать виновного", "наказать виновных", "определить виновного",
+        "определить виновных", "суд народа", "народный суд",
     ])
 
 
@@ -2502,54 +2569,178 @@ def mafia_is_confirm(text):
     low = text.lower()
     return any(k in low for k in [
         "вы точно хотите линчевать", "подтверди", "подтвердите", "точно ли",
+        "подтверждение", "согласны ли", "согласен ли", "уверены ли",
+        "подтверждаете", "подтверждаешь", "подтвердите решение",
+        "поставить лайк", "лайк или дизлайк", "поставьте лайк",
+        "поставьте дизлайк", "проголосуйте реакцией", "реакцией",
+        "голосуйте реакцией", "вы согласны", "вы не против",
+        "финальное решение", "принять решение", "утвердить решение",
+        "подтверждение линча", "подтверждаем", "подтверждаю",
     ])
 
 
-def mafia_pick_button(buttons, sid, kind):
+MAFIA_SYSTEM_PROMPT = """ты — бот-помощник, играющий в мафию в @TrueMafiaBot за нескольких аккаунтов.
+твоя задача — по тексту сообщения от бота и списку кнопок ВЫБРАТЬ НУЖНУЮ КНОПКУ.
+
+правила ролей:
+- Мафия / Дон / Маньяк — убивают ночью. НЕ убивают админа.
+- Комиссар / Сержант — проверяют ночью. НЕ проверяют админа.
+- Доктор — лечит ночью. ВСЕГДА лечит админа.
+- Любовница — отвлекает. НЕ отвлекает админа.
+- Адвокат — защищает. ВСЕГДА защищает админа.
+- Мирный — ночью спит.
+
+фазы игры:
+- РЕГИСТРАЦИЯ: в группе появляется кнопка "Присоединиться". её надо нажать.
+- НОЧЬ: в ЛС бот пишет "Кого будем лечить?" / "С кем будем спать?" / "Кого хочешь линчевать?" и присылает кнопки с ИМЕНАМИ игроков. выбираем имя по правилу роли.
+- ГОЛОСОВАНИЕ: "Голосование продлится 45 секунд" + кнопки с именами. голосуем.
+- ПОДТВЕРЖДЕНИЕ: "Вы точно хотите линчевать X?" + кнопки Да/Нет. нажимаем Да.
+- СМЕРТЬ: "Тебя убили" — ничего не делаем.
+
+правило выбора админа: имя админа указано в задаче. НИКОГДА не выбираем кнопку с его именем в ночных действиях мафии/комиссара/любовницы. ВСЕГДА выбираем его для доктора/адвоката.
+
+ответ СТРОГО в формате JSON:
+{"button": <номер_кнопки_с_нуля>_или_-1, "reason": "коротко"}
+если не знаешь что нажать — {"button": -1, "reason": "не уверен"}"""
+
+
+async def mafia_ask_ai(text, buttons_flat, role, phase, admin_name, target_cmd=None):
+    """Спрашивает LLM какую кнопку нажать. buttons_flat — список строк."""
+    if not buttons_flat:
+        return -1, "no buttons"
+    try:
+        import urllib.request as _ur
+        btns_list = "\n".join(f"{i}. {b}" for i, b in enumerate(buttons_flat))
+        user_prompt = (
+            f"роль: {role or '?'}\n"
+            f"фаза: {phase}\n"
+            f"админ: {admin_name or '?'}\n"
+            f"приказ админа (если есть): {target_cmd or '-'}\n\n"
+            f"сообщение от бота:\n{text}\n\n"
+            f"кнопки (индекс. текст):\n{btns_list}\n\n"
+            f"какую кнопку нажать? ответь JSON."
+        )
+        body = {
+            "model": "qwen/qwen3.7-max",
+            "messages": [
+                {"role": "system", "content": MAFIA_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 200,
+            "stream": False,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + ANYMODEL_API_KEY,
+            "User-Agent": "Mozilla/5.0",
+        }
+        req = _ur.Request(ANYMODEL_BASE_URL + "/chat/completions",
+                          data=json.dumps(body).encode(), headers=headers, method="POST")
+
+        def _run():
+            with _ur.urlopen(req, timeout=20) as r:
+                return json.loads(r.read().decode())
+
+        resp = await asyncio.get_event_loop().run_in_executor(None, _run)
+        content = resp["choices"][0]["message"]["content"]
+        # вытаскиваем JSON
+        m = re.search(r"\{.*?\}", content, re.DOTALL)
+        if m:
+            d = json.loads(m.group(0))
+            return int(d.get("button", -1)), d.get("reason", "")
+        return -1, "no json"
+    except Exception as e:
+        log.warning(f"mafia_ask_ai: {e}")
+        return -1, str(e)
+
+
+async def mafia_pick_button(buttons, sid, kind, text=""):
+    """Сначала — по словарям. Если не вышло и есть LLM — спрашиваем её."""
     st = mafia_state(sid)
     role = st["role"] or ""
     rules = MAFIA_RULES.get(role, {})
     admin_id = str(ADMIN_ID)
-    admin_name_low = ADMIN_NAME_IN_GAME.lower() if ADMIN_NAME_IN_GAME else None
+    admin_name_low = (mafia_get_admin_name() or "").lower()
     flat = [b for row in buttons for b in row]
 
+    def btn_text(b):
+        return (b.text or "").strip()
+
+    # 1) явное совпадение с целью
     cmd = st.get("target_cmd")
     if cmd and kind in ("night", "vote"):
         c = cmd.lower()
         for b in flat:
-            if c in (b.text or "").lower():
+            if c in btn_text(b).lower():
                 return b
 
+    # 2) JOIN — по синонимам
+    if kind == "join":
+        for b in flat:
+            t = btn_text(b).lower()
+            for w in JOIN_BUTTON_WORDS:
+                if w in t:
+                    return b
+        # LLM fallback
+        try:
+            texts = [btn_text(b) for b in flat]
+            idx, why = await mafia_ask_ai(text, texts, role, "join",
+                                         mafia_get_admin_name())
+            log.info(f"[{sid}] LLM join -> {idx} ({why})")
+            if 0 <= idx < len(flat):
+                return flat[idx]
+        except Exception as e:
+            log.warning(f"llm join: {e}")
+        return None
+
+    # 3) CONFIRM
+    if kind == "confirm":
+        for b in flat:
+            t = btn_text(b).lower()
+            for w in CONFIRM_BUTTON_WORDS:
+                if w == t or t.startswith(w) or w in t:
+                    return b
+        for b in flat:
+            t = btn_text(b).lower()
+            if not any(w in t for w in ["нет", "no", "отмен", "cancel", "против"]):
+                return b
+
+    # 4) NIGHT — правила роли
     if kind == "night":
         if rules.get("never_kill_admin") or rules.get("never_check_admin") \
            or rules.get("never_distract_admin"):
             for b in flat:
-                txt = (b.text or "")
-                if admin_id not in txt and (not admin_name_low or admin_name_low not in txt.lower()):
+                t = btn_text(b)
+                if admin_id not in t and (not admin_name_low or admin_name_low not in t.lower()):
                     return b
         if rules.get("always_heal_admin") or rules.get("always_defend_admin"):
             for b in flat:
-                txt = (b.text or "")
-                if admin_id in txt or (admin_name_low and admin_name_low in txt.lower()):
+                t = btn_text(b)
+                if admin_id in t or (admin_name_low and admin_name_low in t.lower()):
                     return b
-            return flat[0] if flat else None
 
+    # 5) VOTE — правила роли
     if kind == "vote":
         if rules.get("never_kill_admin"):
             for b in flat:
-                txt = (b.text or "")
-                if admin_id not in txt and (not admin_name_low or admin_name_low not in txt.lower()):
+                t = btn_text(b)
+                if admin_id not in t and (not admin_name_low or admin_name_low not in t.lower()):
                     return b
 
-    if kind == "confirm":
-        for b in flat:
-            t = (b.text or "").lower()
-            if any(x in t for x in ["да", "подтверд", "yes", "ok", "✅", "за"]):
-                return b
-        return flat[0] if flat else None
+    # 6) LLM fallback — если всё выше не сработало и есть несколько кнопок
+    if len(flat) > 1:
+        try:
+            texts = [btn_text(b) for b in flat]
+            idx, why = await mafia_ask_ai(text, texts, role, kind,
+                                         mafia_get_admin_name(), cmd)
+            log.info(f"[{sid}] LLM {kind} -> {idx} ({why})")
+            if 0 <= idx < len(flat):
+                return flat[idx]
+        except Exception as e:
+            log.warning(f"llm {kind}: {e}")
 
     return flat[0] if flat else None
-
 
 async def mafia_click(client, msg, btn):
     try:
@@ -2596,7 +2787,7 @@ async def mafia_dm_handler(event):
             log.info(f"[{sid}] МЁРТВ")
 
         if mafia_is_night(text) and buttons:
-            btn = mafia_pick_button(buttons, sid, "night")
+            btn = await mafia_pick_button(buttons, sid, "night", text)
             if btn:
                 ok = await mafia_click(event.client, msg, btn)
                 log.info(f"[{sid}] night -> {btn.text} ok={ok}")
@@ -2604,7 +2795,7 @@ async def mafia_dm_handler(event):
             return
 
         if mafia_is_vote(text) and buttons:
-            btn = mafia_pick_button(buttons, sid, "vote")
+            btn = await mafia_pick_button(buttons, sid, "vote", text)
             if btn:
                 ok = await mafia_click(event.client, msg, btn)
                 log.info(f"[{sid}] vote -> {btn.text} ok={ok}")
@@ -2612,7 +2803,7 @@ async def mafia_dm_handler(event):
             return
 
         if mafia_is_confirm(text) and buttons:
-            btn = mafia_pick_button(buttons, sid, "confirm")
+            btn = await mafia_pick_button(buttons, sid, "confirm", text)
             if btn:
                 ok = await mafia_click(event.client, msg, btn)
                 log.info(f"[{sid}] confirm -> {btn.text} ok={ok}")
@@ -2714,17 +2905,17 @@ async def mafia_join_group(sid=None, group_link=None):
                 first = False
                 await asyncio.sleep(3)
             clicked = False
-            async for m in c.iter_messages(group, limit=10):
+            async for m in c.iter_messages(group, limit=15):
                 if m.buttons:
-                    for row in m.buttons:
-                        for b in row:
-                            t = (b.text or "").lower()
-                            if any(x in t for x in ["присоед", "join", "участв"]):
-                                await m.click(text=b.text)
-                                clicked = True
-                                break
-                    if clicked:
-                        break
+                    btn = await mafia_pick_button(m.buttons, s, "join", m.text or "")
+                    if btn:
+                        try:
+                            await m.click(text=btn.text)
+                            clicked = True
+                            log.info(f"[МАФИЯ {s}] нажал: {btn.text}")
+                            break
+                        except Exception as e:
+                            log.warning(f"join click: {e}")
             log.info(f"[МАФИЯ {s}] {'присоединился' if clicked else 'кнопка не найдена'}")
             ok_count += 1
         except Exception as e:
