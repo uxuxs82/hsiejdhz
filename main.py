@@ -237,6 +237,9 @@ async def make_loud(path):
         return path
 
 WATCH_CHATS = [-1002828764783, "@BhopProChat"]
+# ID ботов-спамеров в чатах (их сообщения не логируем)
+SPAM_CHAT_IDS = set()
+
 IGNORED_BOTS = ["valyutaTG_bot","themetrbot","iris_bs_bot","iris_cm_bot","ZanAIsuka_bot","MarvelVoiceBot"]
 NO_BUTTON_BOTS = ["iris_bs_bot","iris_cm_bot","valyutaTG_bot","MarvelVoiceBot"]
 
@@ -747,26 +750,118 @@ if dp:
         if m.from_user.id != ADMIN_ID: return
         await m.answer(f"Панель. Сессий онлайн: {len(CLIENTS)}", reply_markup=main_menu())
 
+    def mafia_main_kb():
+        g = mafia_get_group() or "не задана"
+        n = mafia_get_admin_name() or "не задано"
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Запустить мафию", callback_data="maf_start")],
+            [InlineKeyboardButton(text=f"📌 Группа: {g[:30]}", callback_data="maf_set_group")],
+            [InlineKeyboardButton(text=f"👤 Имя в игре: {n[:20]}", callback_data="maf_set_name")],
+            [InlineKeyboardButton(text="🔗 Deeplink TrueMafia", callback_data="maf_deeplink")],
+            [InlineKeyboardButton(text="📊 Статус ролей", callback_data="maf_status")],
+            [InlineKeyboardButton(text="🔄 Сбросить роли", callback_data="maf_reset_roles")],
+            [InlineKeyboardButton(text="🔌 Перепривязать handlers", callback_data="maf_rebind")],
+        ])
+
     @dp.message(F.text == "🎭 Мафия")
     async def mafia_menu(m: at.Message):
         if m.from_user.id != ADMIN_ID: return
-        g = mafia_get_group() or "не задана"
-        n = mafia_get_admin_name() or "не задано"
-        await m.answer(
-            f"🎭 Мафия TrueMafiaBot\n\n"
-            f"Группа: {g}\n"
-            f"Твоё имя: {n}\n\n"
-            "КОМАНДЫ:\n"
-            "/mafia_group <ссылка> — задать группу\n"
-            "  @username / t.me/+invite / -100xxx / https://t.me/+xxx\n"
-            "/mafia_name <имя> — твоё имя в игре\n"
-            "/mafia_show — показать настройки\n"
-            "/mafia_join — завести всех и начать игру\n"
-            "/mafia_status — кто с какой ролью\n"
-            "/mafia_roles — сброс ролей\n\n"
-            "В ГРУППЕ ПИШИ:\n"
-            "убей Вася / голосуй Петя / проверь Маша / лечи Коля"
-        )
+        await m.answer("🎭 МАФИЯ TrueMafiaBot", reply_markup=mafia_main_kb())
+
+    # все callback'и для меню мафии
+    @dp.callback_query(F.data == "maf_start")
+    async def _cb_maf_start(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        g = mafia_get_group()
+        if not g:
+            await cbq.message.answer("сначала задай группу (📌 Группа)")
+            await cbq.answer(); return
+        await cbq.message.answer(f"🚀 запускаю заход в {g}...")
+        await cbq.answer()
+        await mafia_join_group(None, g)
+        await cbq.message.answer("готово")
+
+    @dp.callback_query(F.data == "maf_set_group")
+    async def _cb_maf_group(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        ADMIN_STATE[cbq.from_user.id] = {"a": "maf_wait_group"}
+        await cbq.message.answer(
+            "пришли ссылку на группу:\n"
+            "@username\n"
+            "https://t.me/+invitehash\n"
+            "https://t.me/username\n"
+            "-1001234567890")
+        await cbq.answer()
+
+    @dp.callback_query(F.data == "maf_set_name")
+    async def _cb_maf_name(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        ADMIN_STATE[cbq.from_user.id] = {"a": "maf_wait_name"}
+        await cbq.message.answer("пришли твоё имя в игре (как отображается в чате):")
+        await cbq.answer()
+
+    @dp.callback_query(F.data == "maf_deeplink")
+    async def _cb_maf_deeplink(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        ADMIN_STATE[cbq.from_user.id] = {"a": "maf_wait_deeplink"}
+        await cbq.message.answer(
+            "пришли deeplink от бота:\n"
+            "https://t.me/TrueMafiaBot?start=XXXX\n\n"
+            "все сессии отправят /start с параметром")
+        await cbq.answer()
+
+    @dp.callback_query(F.data == "maf_status")
+    async def _cb_maf_status(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        lines = []
+        for sid in CLIENTS:
+            st = MAFIA_STATE.get(sid, {})
+            r = st.get("role") or "?"
+            a = "жив" if st.get("alive", True) else "мёртв"
+            nm = CLIENT_META.get(sid, {}).get("name", sid)
+            lines.append(f"{nm}: {r} [{a}]")
+        await cbq.message.answer("\n".join(lines) or "никто не онлайн")
+        await cbq.answer()
+
+    @dp.callback_query(F.data == "maf_reset_roles")
+    async def _cb_maf_reset(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        for sid in MAFIA_STATE:
+            MAFIA_STATE[sid].update(role=None, alive=True, target_cmd=None, game_active=False)
+        await cbq.message.answer("роли сброшены")
+        await cbq.answer()
+
+    @dp.callback_query(F.data == "maf_rebind")
+    async def _cb_maf_rebind(cbq: at.CallbackQuery):
+        if cbq.from_user.id != ADMIN_ID: await cbq.answer(); return
+        try:
+            from telethon import events as _ev
+            for sid, c in CLIENTS.items():
+                try:
+                    c.remove_event_handler(mafia_dm_handler)
+                except Exception:
+                    pass
+                try:
+                    c.remove_event_handler(mafia_group_logger)
+                except Exception:
+                    pass
+                c.add_event_handler(mafia_dm_handler,
+                                    _ev.NewMessage(from_users=MAFIA_BOT))
+                mg = None
+                g = mafia_get_group()
+                if g:
+                    try:
+                        mg = await c.get_entity(g)
+                    except Exception:
+                        pass
+                if mg:
+                    c.add_event_handler(mafia_group_handler, _ev.NewMessage(chats=mg))
+                    c.add_event_handler(mafia_group_logger,
+                                        _ev.NewMessage(from_users=MAFIA_BOT, chats=mg))
+            await cbq.message.answer(f"перепривязал handlers на {len(CLIENTS)}")
+        except Exception as e:
+            await cbq.message.answer(f"ошибка: {e}")
+        await cbq.answer()
 
     @dp.message(Command("mafia_join"))
     async def _mjoin(m: at.Message):
@@ -1462,6 +1557,34 @@ if dp:
         st = ADMIN_STATE.get(m.from_user.id)
         if not st: return
         a = st.get("a")
+
+        # ==== мафия ====
+        if a == "maf_wait_group":
+            link = m.text.strip()
+            MAFIA_CFG["group"] = link
+            mafia_save_cfg()
+            ADMIN_STATE.pop(m.from_user.id, None)
+            await m.answer(f"✓ группа сохранена: {link}")
+            return
+
+        if a == "maf_wait_name":
+            name = m.text.strip()
+            MAFIA_CFG["admin_name"] = name
+            mafia_save_cfg()
+            ADMIN_STATE.pop(m.from_user.id, None)
+            await m.answer(f"✓ имя сохранено: {name}")
+            return
+
+        if a == "maf_wait_deeplink":
+            link = m.text.strip()
+            ADMIN_STATE.pop(m.from_user.id, None)
+            await m.answer("обрабатываю deeplink...")
+            ok = await mafia_deeplink_join(link)
+            if ok:
+                await m.answer("✓ отправил /start всем сессиям")
+            else:
+                await m.answer("✗ не смог (проверь формат ссылки)")
+            return
 
         # ==== монитор ====
         if a == "mon_add_link":
@@ -2770,9 +2893,13 @@ async def mafia_dm_handler(event):
         text = msg.text or ""
         buttons = msg.buttons or []
 
-        log.info(f"[МАФИЯ {sid}] ЛС: {text[:130]!r}")
-        for row in buttons:
-            log.info(f"  [{sid}] btn: {[b.text for b in row]}")
+        # логируем только если реально есть действие или кнопки
+        has_action = bool(buttons) or any(k in text.lower() for k in [
+            "ты -", "ты ", "роль", "умер", "убили", "линчевали",
+            "кого", "выбери", "голос", "подтверд"
+        ])
+        if has_action:
+            log.info(f"[МАФИЯ {sid}] {text[:100]!r} btns={len(buttons)}")
 
         r = mafia_parse_role(text)
         if r:
@@ -2874,6 +3001,36 @@ async def mafia_resolve_group(client, link):
         return await client.get_entity(uname)
     except Exception:
         return None
+
+
+async def mafia_deeplink_join(link):
+    """Отправляет /start PARAM всем сессиям. link типа t.me/TrueMafiaBot?start=XXX."""
+    m = re.search(r"t\.me/([A-Za-z0-9_]+)\?start=([A-Za-z0-9_\-]+)", link)
+    if not m:
+        # пробуем просто username
+        m2 = re.match(r"(?:https?://)?t\.me/([A-Za-z0-9_]+)", link)
+        if m2:
+            bot_uname = m2.group(1)
+            param = ""
+        else:
+            return False
+    else:
+        bot_uname, param = m.group(1), m.group(2)
+
+    log.info(f"deeplink: @{bot_uname} param={param or '-'}")
+    ok = 0
+    for sid, c in CLIENTS.items():
+        try:
+            bot_ent = await c.get_entity(bot_uname)
+            text = "/start" + (f" {param}" if param else "")
+            await c.send_message(bot_ent, text)
+            log.info(f"[{sid}] отправил {bot_uname} '{text}'")
+            ok += 1
+        except Exception as e:
+            log.warning(f"deeplink {sid}: {e}")
+        await asyncio.sleep(random.uniform(1.0, 2.5))
+    log.info(f"deeplink: {ok}/{len(CLIENTS)} отправили")
+    return ok > 0
 
 
 async def mafia_join_group(sid=None, group_link=None):
